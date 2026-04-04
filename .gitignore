@@ -1,0 +1,14 @@
+# Build artifacts
+BeatKeys.app/
+BeatKeys_binary
+BeatLight.app/
+BeatLight_binary
+
+# Test files
+kb_test*
+tap_audio_test*
+tap_diag*
+
+# macOS
+.DS_Store
+*.dmg
