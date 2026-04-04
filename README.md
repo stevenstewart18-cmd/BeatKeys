@@ -16,3 +16,7 @@ BeatKeys is a spiritual successor to **iSpazz**, the beloved iTunes visualizer p
 - Automatically follows audio device switches (speakers, AirPods, Bluetooth)
 - Auto-recovers if audio goes silent
 - Requires macOS 14.2 or later
+
+## Built With Claude
+
+BeatKeys was built collaboratively with [Claude](https://claude.ai) by Anthropic — from the CoreAudio tap architecture and beat detection algorithm to the custom menu bar icon and build pipeline. A human–AI pair programming project from start to finish.
