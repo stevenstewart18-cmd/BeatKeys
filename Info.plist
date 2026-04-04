@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>BeatLight</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.beatlight.app</string>
+    <key>CFBundleExecutable</key>
+    <string>BeatLight</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.2</string>
+    <!-- kTCCServiceAudioCapture — required by CoreAudio HAL for interprocess tap on macOS 26 -->
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>BeatLight captures system audio to detect beats and sync your keyboard backlight.</string>
+    <!-- kTCCServiceScreenCapture — fallback for older macOS / SCKit permission trigger -->
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>BeatLight reads system audio to detect beats and sync your keyboard backlight.</string>
+    <!-- kTCCServiceMicrophone — for AVCaptureDevice audio input access -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>BeatLight needs audio access to detect beats and sync your keyboard backlight.</string>
+</dict>
+</plist>
