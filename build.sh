@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-PROJ="/Users/steven/Documents/Claude/Projects/BeatKeys"
+PROJ="$(cd "$(dirname "$0")" && pwd)"
 APP="$PROJ/BeatKeys.app"
 BINARY="$APP/Contents/MacOS/BeatKeys"
 CERT="Developer ID Application"

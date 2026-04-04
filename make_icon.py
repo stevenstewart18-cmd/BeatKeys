@@ -132,7 +132,7 @@ def draw_icon(size):
 
 
 # ── Generate iconset ─────────────────────────────────────────────────────
-PROJ = '/Users/steven/Documents/Claude/Projects/BeatKeys'
+PROJ = os.path.dirname(os.path.abspath(__file__))
 ICONSET = os.path.join(PROJ, 'BeatKeys.iconset')
 os.makedirs(ICONSET, exist_ok=True)
 
