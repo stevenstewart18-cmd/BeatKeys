@@ -32,8 +32,6 @@ class BeatAudioEngine {
     private var staleSilenceRuns = 0
 
     private let sysObj = AudioObjectID(bitPattern: kAudioObjectSystemObject)
-
-    // Prevent overlapping restarts
     private var isRestarting = false
 
     // MARK: - Public API
@@ -52,7 +50,7 @@ class BeatAudioEngine {
         healthTimer?.cancel(); healthTimer = nil
         removeDeviceChangeListener()
         teardownTap()
-        NSLog("BeatLight: stopped")
+        NSLog("BeatKeys: stopped")
     }
 
     // MARK: - Output Device Change Listener
@@ -70,18 +68,12 @@ class BeatAudioEngine {
         }
         if status == noErr {
             deviceListenerInstalled = true
-            NSLog("BeatLight: 🎧 Output device change listener installed")
+            NSLog("BeatKeys: 🎧 Output device change listener installed")
         }
     }
 
     private func removeDeviceChangeListener() {
         guard deviceListenerInstalled else { return }
-        var prop = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        // We can't easily remove block-based listeners without storing the block,
-        // but setting the flag prevents the handler from acting after stop()
         deviceListenerInstalled = false
     }
 
@@ -89,11 +81,10 @@ class BeatAudioEngine {
         guard isRunning, !isRestarting else { return }
         let newUID = getDefaultOutputDeviceUID()
         guard newUID != currentOutputUID else { return }
-        NSLog("BeatLight: 🎧 Output device changed: %@ → %@",
+        NSLog("BeatKeys: 🎧 Output device changed: %@ → %@",
               currentOutputUID ?? "nil", newUID ?? "nil")
         isRestarting = true
         teardownTap()
-        // Brief delay to let the system settle after device switch
         Thread.sleep(forTimeInterval: 0.5)
         setupTap()
         isRestarting = false
@@ -119,30 +110,30 @@ class BeatAudioEngine {
 
     private func setupTap() {
         guard let outUID = getDefaultOutputDeviceUID() else {
-            NSLog("BeatLight: ❌ No output device"); return
+            NSLog("BeatKeys: ❌ No output device"); return
         }
         currentOutputUID = outUID
         let procs = getAudioProcessObjects()
         guard !procs.isEmpty else {
-            NSLog("BeatLight: ❌ No audio processes"); return
+            NSLog("BeatKeys: ❌ No audio processes"); return
         }
 
         let desc = CATapDescription(processes: procs, deviceUID: outUID, stream: 0)
-        desc.uuid = UUID(); desc.name = "BeatLight"
+        desc.uuid = UUID(); desc.name = "BeatKeys"
         desc.isPrivate = true; desc.isExclusive = false; desc.muteBehavior = .unmuted
 
         var newTap: AudioObjectID = kAudioObjectUnknown
         guard AudioHardwareCreateProcessTap(desc, &newTap) == noErr else {
-            NSLog("BeatLight: ❌ CreateProcessTap failed"); return
+            NSLog("BeatKeys: ❌ CreateProcessTap failed"); return
         }
         tapID = newTap
         guard let tapUID = readTapUID(tapID) else {
-            NSLog("BeatLight: ❌ readTapUID failed"); teardownTap(); return
+            NSLog("BeatKeys: ❌ readTapUID failed"); teardownTap(); return
         }
 
         let aggProps: [String: Any] = [
-            kAudioAggregateDeviceNameKey      as String: "BeatLight",
-            kAudioAggregateDeviceUIDKey       as String: "com.beatlight.agg-\(UUID().uuidString)",
+            kAudioAggregateDeviceNameKey      as String: "BeatKeys",
+            kAudioAggregateDeviceUIDKey       as String: "com.beatkeys.agg-\(UUID().uuidString)",
             kAudioAggregateDeviceIsPrivateKey as String: true,
             kAudioAggregateDeviceTapListKey   as String: [[
                 kAudioSubTapUIDKey               as String: tapUID,
@@ -151,7 +142,7 @@ class BeatAudioEngine {
         ]
         var newAgg: AudioObjectID = kAudioObjectUnknown
         guard AudioHardwareCreateAggregateDevice(aggProps as CFDictionary, &newAgg) == noErr else {
-            NSLog("BeatLight: ❌ CreateAgg failed"); teardownTap(); return
+            NSLog("BeatKeys: ❌ CreateAgg failed"); teardownTap(); return
         }
         aggregateID = newAgg
         Thread.sleep(forTimeInterval: 1.0)
@@ -162,11 +153,11 @@ class BeatAudioEngine {
             self?.processBuffer(input.pointee)
         }
         guard ps == noErr, let p = newProc else {
-            NSLog("BeatLight: ❌ IOProc failed: %d", ps); teardownTap(); return
+            NSLog("BeatKeys: ❌ IOProc failed: %d", ps); teardownTap(); return
         }
         ioProcID = p
         guard AudioDeviceStart(aggregateID, p) == noErr else {
-            NSLog("BeatLight: ❌ DeviceStart failed"); teardownTap(); return
+            NSLog("BeatKeys: ❌ DeviceStart failed"); teardownTap(); return
         }
 
         // Reset state
@@ -176,7 +167,7 @@ class BeatAudioEngine {
         ringIdx = 0
 
         isRunning = true
-        NSLog("BeatLight: ✅ Tap running on %@ (%d procs)", outUID, procs.count)
+        NSLog("BeatKeys: ✅ Tap running on %@ (%d procs)", outUID, procs.count)
         startHealthMonitor()
     }
 
@@ -198,14 +189,14 @@ class BeatAudioEngine {
         let msg = nz > 0
             ? "AUDIO OK: \(nz)/\(tot) non-silent, \(beatCount) beats | device: \(currentOutputUID ?? "?")\n"
             : "SILENT: \(tot) callbacks all zero | device: \(currentOutputUID ?? "?")\n"
-        try? msg.write(toFile: "/tmp/beatlight_tap.log", atomically: true, encoding: .utf8)
+        try? msg.write(toFile: "/tmp/beatkeys_tap.log", atomically: true, encoding: .utf8)
 
         if nz > lastNonZeroCount { staleSilenceRuns = 0 }
         else if tot > lastNonZeroCount + 200 { staleSilenceRuns += 1 }
         lastNonZeroCount = nz
 
         if staleSilenceRuns >= 3 {
-            NSLog("BeatLight: 🔄 Recreating tap (silence)")
+            NSLog("BeatKeys: 🔄 Recreating tap (silence)")
             teardownTap(); Thread.sleep(forTimeInterval: 0.5); setupTap()
         }
     }
@@ -228,19 +219,14 @@ class BeatAudioEngine {
         callbackCount += 1
         if rms > 0.0001 { nonZeroCount += 1 }
 
-        // Store in ring buffer
         ringBuf[ringIdx % bufSize] = rms
         ringIdx += 1
 
-        // Need at least 1s of data before detecting
         guard ringIdx > 100 else { return }
 
-        // Compute mean of the full ring buffer
         var mean: Float = 0
         vDSP_meanv(ringBuf, 1, &mean, vDSP_Length(bufSize))
 
-        // Sensitivity → multiplier:
-        //   High(0.8) → 1.3×   Medium(0.5) → 1.5×   Low(0.2) → 1.7×
         let multiplier: Float = 1.3 + (1.0 - sensitivity) * 0.5
         let threshold = mean * multiplier
 

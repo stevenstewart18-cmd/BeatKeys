@@ -43,7 +43,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit BeatLight",
+        menu.addItem(NSMenuItem(title: "Quit BeatKeys",
                                 action: #selector(NSApplication.terminate(_:)),
                                 keyEquivalent: "q"))
         statusItem.menu = menu

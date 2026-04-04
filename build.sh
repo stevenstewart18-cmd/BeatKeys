@@ -1,13 +1,13 @@
 #!/bin/bash
 set -e
 
-PROJ="/Users/steven/BeatLight"
-APP="$PROJ/BeatLight.app"
-BINARY="$APP/Contents/MacOS/BeatLight"
+PROJ="/Users/steven/BeatKeys"
+APP="$PROJ/BeatKeys.app"
+BINARY="$APP/Contents/MacOS/BeatKeys"
 CERT="Apple Development: steven Stewart (H9TP3263UY)"
-ENT="$PROJ/BeatLight.entitlements"
+ENT="$PROJ/BeatKeys.entitlements"
 
-echo "🔨 Compiling BeatLight..."
+echo "🔨 Compiling BeatKeys..."
 
 swiftc \
     "$PROJ/Sources/main.swift" \
@@ -18,7 +18,7 @@ swiftc \
     -framework CoreAudio \
     -framework Accelerate \
     -framework Foundation \
-    -o "$PROJ/BeatLight_binary" \
+    -o "$PROJ/BeatKeys_binary" \
     2>&1
 
 echo "📦 Creating .app bundle..."
@@ -26,7 +26,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
 
-cp "$PROJ/BeatLight_binary" "$BINARY"
+cp "$PROJ/BeatKeys_binary" "$BINARY"
 cp "$PROJ/Info.plist" "$APP/Contents/Info.plist"
 chmod +x "$BINARY"
 
@@ -38,4 +38,4 @@ xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 echo ""
 echo "✅ Done!"
 echo "▶️  To run:  open $APP"
-echo "📋 To check tap log after 5s:  cat /tmp/beatlight_tap.log"
+echo "📋 To check tap log after 5s:  cat /tmp/beatkeys_tap.log"
