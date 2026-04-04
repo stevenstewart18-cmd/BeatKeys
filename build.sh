@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-PROJ="/Users/steven/BeatKeys"
+PROJ="/Users/steven/Documents/Claude/Projects/BeatKeys"
 APP="$PROJ/BeatKeys.app"
 BINARY="$APP/Contents/MacOS/BeatKeys"
-CERT="Apple Development: steven Stewart (H9TP3263UY)"
+CERT="Apple Development"
 ENT="$PROJ/BeatKeys.entitlements"
 
 echo "🔨 Compiling BeatKeys..."
