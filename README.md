@@ -17,6 +17,10 @@ BeatKeys is a spiritual successor to **iSpazz**, the beloved iTunes visualizer p
 - Auto-recovers if audio goes silent
 - Requires macOS 14.2 or later
 
+## ⚠️ Private API Notice
+
+BeatKeys controls the keyboard backlight via **CoreBrightness.framework**, a private Apple framework accessed through the Objective-C runtime. It is not a public API and carries no stability guarantee — Apple could rename, restructure, or remove it in any future macOS release, which would break the backlight control feature. Everything else in the app (audio tapping, beat detection, menu bar UI) uses fully public APIs and will continue to work regardless.
+
 ## Built With Claude
 
 BeatKeys was built collaboratively with [Claude](https://claude.ai) by Anthropic — from the CoreAudio tap architecture and beat detection algorithm to the custom menu bar icon and build pipeline. A human–AI pair programming project from start to finish.
