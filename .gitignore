@@ -11,3 +11,4 @@ tap_diag*
 
 # macOS
 .DS_Store
+*.dmg

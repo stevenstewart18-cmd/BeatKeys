@@ -4,7 +4,7 @@ set -e
 PROJ="/Users/steven/Documents/Claude/Projects/BeatKeys"
 APP="$PROJ/BeatKeys.app"
 BINARY="$APP/Contents/MacOS/BeatKeys"
-CERT="Apple Development"
+CERT="Developer ID Application"
 ENT="$PROJ/BeatKeys.entitlements"
 
 echo "🔨 Compiling BeatKeys..."
@@ -28,6 +28,7 @@ mkdir -p "$APP/Contents/Resources"
 
 cp "$PROJ/BeatKeys_binary" "$BINARY"
 cp "$PROJ/Info.plist" "$APP/Contents/Info.plist"
+cp "$PROJ/BeatKeys.icns" "$APP/Contents/Resources/BeatKeys.icns"
 chmod +x "$BINARY"
 
 echo "🔏 Signing with Developer certificate + entitlements..."
