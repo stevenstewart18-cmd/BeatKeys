@@ -1,5 +1,4 @@
 import AppKit
-import AVFoundation
 
 class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -7,6 +6,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let audioEngine = BeatAudioEngine()
     var isActive    = false
     var toggleItem: NSMenuItem!
+
+    lazy var settingsController = SettingsWindowController(engine: audioEngine)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -16,7 +17,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         audioEngine.onBeat = { [weak self] in self?.onBeat() }
 
-        // Set keyboard to max brightness and use that as home level
         KeyboardController.shared.setMaxAndSnapshot()
         start()
     }
@@ -28,22 +28,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                 action: #selector(toggleSync), keyEquivalent: "")
         toggleItem.target = self
         menu.addItem(toggleItem)
-        menu.addItem(.separator())
-
-        let sensLabel = NSMenuItem(title: "Sensitivity", action: nil, keyEquivalent: "")
-        sensLabel.isEnabled = false
-        menu.addItem(sensLabel)
-
-        for (label, value): (String, Float) in [("  Low", 0.2), ("  Medium", 0.5), ("  High", 0.8)] {
-            let item = NSMenuItem(title: label,
-                                  action: #selector(setSensitivity(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = NSNumber(value: value)
-            item.state = label.contains("Medium") ? .on : .off
-            menu.addItem(item)
-        }
 
         menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(title: "Settings…",
+                                      action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        menu.addItem(.separator())
+
         menu.addItem(NSMenuItem(title: "Quit BeatKeys",
                                 action: #selector(NSApplication.terminate(_:)),
                                 keyEquivalent: "q"))
@@ -52,6 +46,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleSync() {
         if isActive { stop() } else { start() }
+    }
+
+    @objc func openSettings() {
+        settingsController.show()
     }
 
     func start() {
@@ -70,16 +68,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func onBeat() { KeyboardController.shared.pulse() }
-
-    @objc func setSensitivity(_ sender: NSMenuItem) {
-        for item in statusItem.menu?.items ?? [] where item.action == #selector(setSensitivity(_:)) {
-            item.state = .off
-        }
-        sender.state = .on
-        if let val = (sender.representedObject as? NSNumber)?.floatValue {
-            audioEngine.sensitivity = val
-        }
-    }
 
     func applicationWillTerminate(_ notification: Notification) {
         audioEngine.stop()
@@ -103,20 +91,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // ── Double music note (♫) ──
             iconColor.setFill()
 
-            // Beam 1 (top)
             NSBezierPath(roundedRect: NSRect(x: 6.5, y: 4, width: 8, height: 1.5),
                          xRadius: 0.6, yRadius: 0.6).fill()
-            // Beam 2
             NSBezierPath(roundedRect: NSRect(x: 6.5, y: 6, width: 8, height: 1.5),
                          xRadius: 0.6, yRadius: 0.6).fill()
-            // Left stem
             NSBezierPath(roundedRect: NSRect(x: 6.5, y: 4, width: 1.5, height: 8.5),
                          xRadius: 0.75, yRadius: 0.75).fill()
-            // Right stem
             NSBezierPath(roundedRect: NSRect(x: 13, y: 4, width: 1.5, height: 7.5),
                          xRadius: 0.75, yRadius: 0.75).fill()
 
-            // Left note head (rotated ellipse)
             let lHead = NSBezierPath(ovalIn: NSRect(x: -2.7, y: -1.6, width: 5.4, height: 3.2))
             var lt = AffineTransform()
             lt.translate(x: 5.8, y: 14)
@@ -124,7 +107,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             lHead.transform(using: lt)
             lHead.fill()
 
-            // Right note head
             let rHead = NSBezierPath(ovalIn: NSRect(x: -2.7, y: -1.6, width: 5.4, height: 3.2))
             var rt = AffineTransform()
             rt.translate(x: 12.3, y: 12.5)

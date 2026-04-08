@@ -2,11 +2,59 @@ import CoreAudio
 import Accelerate
 import Foundation
 
+// MARK: - FrequencyBand
+
+enum FrequencyBand: Int, CaseIterable {
+    case fullSpectrum = 0
+    case bass         = 1   // 60–250 Hz  (kick drum, bass guitar)
+    case rhythm       = 2   // 250–800 Hz (snare, mid percussion)
+    case highs        = 3   // 2 kHz–8 kHz (hi-hat, cymbals)
+
+    var label: String {
+        switch self {
+        case .fullSpectrum: return "All"
+        case .bass:         return "Bass"
+        case .rhythm:       return "Rhythm"
+        case .highs:        return "Highs"
+        }
+    }
+
+    /// Frequency range (Hz) used to select FFT bins.
+    var range: (lo: Float, hi: Float) {
+        switch self {
+        case .fullSpectrum: return (20, 20_000)
+        case .bass:         return (60, 250)
+        case .rhythm:       return (250, 800)
+        case .highs:        return (2_000, 8_000)
+        }
+    }
+}
+
+// MARK: - BeatAudioEngine
+
 class BeatAudioEngine {
 
     var onBeat: (() -> Void)?
+
+    // ── Tunable parameters (safe to set from any thread before beat fires) ──
     var sensitivity: Float = 0.5
 
+    var frequencyBand: FrequencyBand = .fullSpectrum {
+        didSet {
+            // Reset FFT accumulator so the new band takes effect immediately
+            // rather than waiting for the tail of a mismatched window.
+            fftAccumCount = 0
+            lastBandRMS   = 0
+        }
+    }
+
+    /// Minimum time between beats in milliseconds (controls max BPM).
+    /// Default 140 ms ≈ 428 BPM ceiling — well above any real music tempo.
+    var minBeatIntervalMs: Double = 140 {
+        didSet { minBeatInterval = minBeatIntervalMs / 1000.0 }
+    }
+
+    // ── CoreAudio state ──────────────────────────────────────────────────
     private var tapID:       AudioObjectID        = kAudioObjectUnknown
     private var aggregateID: AudioObjectID        = kAudioObjectUnknown
     private var ioProcID:    AudioDeviceIOProcID? = nil
@@ -17,22 +65,49 @@ class BeatAudioEngine {
     private var callbackCount = 0
     private var nonZeroCount  = 0
 
-    // ── Beat detection: large ring buffer + simple threshold ─────────────
-    private let bufSize = 500
-    private var ringBuf: [Float] = []
-    private var ringIdx = 0
-    private var lastBeatTime = Date.distantPast
-    private let minBeatInterval: TimeInterval = 0.14
+    // ── Beat detection: large ring buffer + adaptive threshold ───────────
+    private let  bufSize = 500
+    private var  ringBuf: [Float] = []
+    private var  ringIdx = 0
+    private var  lastBeatTime    = Date.distantPast
+    private var  minBeatInterval: TimeInterval = 0.14
+    private var  beatCount = 0
 
-    private var beatCount = 0
+    // ── FFT for frequency-band filtering ────────────────────────────────
+    private let  fftLog2n: vDSP_Length = 11   // 2048-point FFT
+    private let  fftSize  = 2048
+    private var  fftSetup: FFTSetup?
+    private var  hannWindow:   [Float] = []
+    private var  fftRealp:     [Float] = []
+    private var  fftImagp:     [Float] = []
+    private var  fftAccum:     [Float] = []   // mono-sample accumulator
+    private var  fftAccumCount = 0
+    private var  lastBandRMS:  Float   = 0
+    private var  sampleRate:   Float   = 44100
 
-    // Auto-recovery
-    private var healthTimer: DispatchSourceTimer?
-    private var lastNonZeroCount = 0
-    private var staleSilenceRuns = 0
+    // ── Auto-recovery ────────────────────────────────────────────────────
+    private var healthTimer:      DispatchSourceTimer?
+    private var lastNonZeroCount  = 0
+    private var staleSilenceRuns  = 0
 
-    private let sysObj = AudioObjectID(bitPattern: kAudioObjectSystemObject)
+    private let sysObj      = AudioObjectID(bitPattern: kAudioObjectSystemObject)
     private var isRestarting = false
+
+    // MARK: - Init / Deinit
+
+    init() {
+        let halfN   = fftSize / 2
+        fftSetup    = vDSP_create_fftsetup(fftLog2n, FFTRadix(FFT_RADIX2))
+        hannWindow  = [Float](repeating: 0, count: fftSize)
+        vDSP_hann_window(&hannWindow, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
+        fftRealp    = [Float](repeating: 0, count: halfN)
+        fftImagp    = [Float](repeating: 0, count: halfN)
+        fftAccum    = [Float](repeating: 0, count: fftSize)
+    }
+
+    deinit {
+        if let s = fftSetup { vDSP_destroy_fftsetup(s) }
+    }
 
     // MARK: - Public API
 
@@ -59,13 +134,11 @@ class BeatAudioEngine {
         guard !deviceListenerInstalled else { return }
         var prop = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
+            mScope:    kAudioObjectPropertyScopeGlobal,
+            mElement:  kAudioObjectPropertyElementMain)
         let status = AudioObjectAddPropertyListenerBlock(
             sysObj, &prop, DispatchQueue.global(qos: .userInitiated)
-        ) { [weak self] _, _ in
-            self?.handleOutputDeviceChanged()
-        }
+        ) { [weak self] _, _ in self?.handleOutputDeviceChanged() }
         if status == noErr {
             deviceListenerInstalled = true
             NSLog("BeatKeys: 🎧 Output device change listener installed")
@@ -145,7 +218,13 @@ class BeatAudioEngine {
             NSLog("BeatKeys: ❌ CreateAgg failed"); teardownTap(); return
         }
         aggregateID = newAgg
+
+        // Critical: sleep before attaching IOProc or it silently fails.
         Thread.sleep(forTimeInterval: 1.0)
+
+        // Read sample rate now that the aggregate device exists.
+        sampleRate = readSampleRate(aggregateID)
+        NSLog("BeatKeys: sample rate %.0f Hz", sampleRate)
 
         var newProc: AudioDeviceIOProcID? = nil
         let ps = AudioDeviceCreateIOProcIDWithBlock(&newProc, aggregateID, nil) {
@@ -156,15 +235,18 @@ class BeatAudioEngine {
             NSLog("BeatKeys: ❌ IOProc failed: %d", ps); teardownTap(); return
         }
         ioProcID = p
+
+        // Reset all detection state BEFORE starting the IOProc,
+        // since the IO callback fires immediately on a different thread.
+        callbackCount = 0; nonZeroCount = 0; beatCount = 0
+        lastNonZeroCount = 0; staleSilenceRuns = 0
+        ringBuf      = [Float](repeating: 0, count: bufSize)
+        ringIdx      = 0
+        fftAccumCount = 0; lastBandRMS = 0
+
         guard AudioDeviceStart(aggregateID, p) == noErr else {
             NSLog("BeatKeys: ❌ DeviceStart failed"); teardownTap(); return
         }
-
-        // Reset state
-        callbackCount = 0; nonZeroCount = 0; beatCount = 0
-        lastNonZeroCount = 0; staleSilenceRuns = 0
-        ringBuf = [Float](repeating: 0, count: bufSize)
-        ringIdx = 0
 
         isRunning = true
         NSLog("BeatKeys: ✅ Tap running on %@ (%d procs)", outUID, procs.count)
@@ -187,7 +269,7 @@ class BeatAudioEngine {
         let nz = nonZeroCount; let tot = callbackCount
 
         let msg = nz > 0
-            ? "AUDIO OK: \(nz)/\(tot) non-silent, \(beatCount) beats | device: \(currentOutputUID ?? "?")\n"
+            ? "AUDIO OK: \(nz)/\(tot) non-silent, \(beatCount) beats | band: \(frequencyBand.label) | device: \(currentOutputUID ?? "?")\n"
             : "SILENT: \(tot) callbacks all zero | device: \(currentOutputUID ?? "?")\n"
         try? msg.write(toFile: "/tmp/beatkeys_tap.log", atomically: true, encoding: .utf8)
 
@@ -213,11 +295,19 @@ class BeatAudioEngine {
         guard frames > 0 else { return }
 
         let samples = data.bindMemory(to: Float.self, capacity: floats)
-        var rms: Float = 0
-        vDSP_rmsqv(samples, vDSP_Stride(ch), &rms, vDSP_Length(frames))
 
+        // Full-spectrum RMS — always computed for activity detection.
+        var fullRMS: Float = 0
+        vDSP_rmsqv(samples, vDSP_Stride(ch), &fullRMS, vDSP_Length(frames))
         callbackCount += 1
-        if rms > 0.0001 { nonZeroCount += 1 }
+        if fullRMS > 0.0001 { nonZeroCount += 1 }
+
+        // Select the energy measure fed into the beat-detection ring buffer.
+        // Band modes use FFT-derived RMS so the adaptive threshold is
+        // calibrated against the same spectral slice being tested.
+        let rms: Float = frequencyBand == .fullSpectrum
+            ? fullRMS
+            : bandRMS(samples: samples, stride: ch, frames: frames)
 
         ringBuf[ringIdx % bufSize] = rms
         ringIdx += 1
@@ -237,25 +327,95 @@ class BeatAudioEngine {
         else { return }
 
         lastBeatTime = now
-        beatCount += 1
+        beatCount   += 1
         let cb = onBeat
         DispatchQueue.main.async { cb?() }
     }
 
+    // MARK: - Frequency Band RMS (IO thread)
+
+    /// Accumulates mono samples into a 2048-point window, then returns the
+    /// band-limited RMS via FFT. Returns the previous result while filling.
+    private func bandRMS(samples: UnsafePointer<Float>,
+                         stride:  Int,
+                         frames:  Int) -> Float {
+        let space = fftSize - fftAccumCount
+        let copy  = min(frames, space)
+        for i in 0..<copy {
+            fftAccum[fftAccumCount + i] = samples[i * stride]
+        }
+        fftAccumCount += copy
+        guard fftAccumCount >= fftSize else { return lastBandRMS }
+
+        lastBandRMS   = computeFFTBandRMS()
+        fftAccumCount = 0
+        return lastBandRMS
+    }
+
+    private func computeFFTBandRMS() -> Float {
+        guard let setup = fftSetup else { return 0 }
+
+        let halfN = fftSize / 2
+
+        // Hann-window the accumulated frame.
+        var windowed = [Float](repeating: 0, count: fftSize)
+        vDSP_vmul(fftAccum, 1, hannWindow, 1, &windowed, 1, vDSP_Length(fftSize))
+
+        // Re-interpret pairs of real floats as complex, pack into split form.
+        windowed.withUnsafeBytes { rawPtr in
+            let cPtr = rawPtr.bindMemory(to: DSPComplex.self).baseAddress!
+            var split = DSPSplitComplex(realp: &fftRealp, imagp: &fftImagp)
+            vDSP_ctoz(cPtr, 2, &split, 1, vDSP_Length(halfN))
+        }
+
+        // In-place forward FFT.
+        var split = DSPSplitComplex(realp: &fftRealp, imagp: &fftImagp)
+        vDSP_fft_zrip(setup, &split, 1, fftLog2n, FFTDirection(FFT_FORWARD))
+
+        // Squared magnitudes (power spectrum).
+        var power = [Float](repeating: 0, count: halfN)
+        vDSP_zvmags(&split, 1, &power, 1, vDSP_Length(halfN))
+
+        // Map Hz range → bin indices and average power in that slice.
+        let binHz = sampleRate / Float(fftSize)
+        let range = frequencyBand.range
+        let loBin = max(1,       Int((range.lo / binHz).rounded()))
+        let hiBin = min(halfN-1, Int((range.hi / binHz).rounded()))
+        guard loBin <= hiBin else { return 0 }
+
+        var meanPower: Float = 0
+        let count = hiBin - loBin + 1
+        vDSP_meanv(Array(power[loBin...hiBin]), 1, &meanPower, vDSP_Length(count))
+
+        // sqrt(mean power) → RMS; divide by N to normalise for window size.
+        return sqrt(meanPower) / Float(fftSize)
+    }
+
     // MARK: - CoreAudio Helpers
+
+    private func readSampleRate(_ deviceID: AudioObjectID) -> Float {
+        var prop = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope:    kAudioObjectPropertyScopeGlobal,
+            mElement:  kAudioObjectPropertyElementMain)
+        var rate: Float64 = 44100
+        var size = UInt32(MemoryLayout<Float64>.size)
+        AudioObjectGetPropertyData(deviceID, &prop, 0, nil, &size, &rate)
+        return Float(rate)
+    }
 
     private func getDefaultOutputDeviceUID() -> String? {
         var prop = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
+            mScope:    kAudioObjectPropertyScopeGlobal,
+            mElement:  kAudioObjectPropertyElementMain)
         var devID: AudioObjectID = kAudioObjectUnknown
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         guard AudioObjectGetPropertyData(sysObj, &prop, 0, nil, &size, &devID) == noErr else { return nil }
         var uidProp = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
+            mScope:    kAudioObjectPropertyScopeGlobal,
+            mElement:  kAudioObjectPropertyElementMain)
         var cfRef: Unmanaged<CFString>? = nil
         var uidSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         let ok = withUnsafeMutablePointer(to: &cfRef) {
@@ -268,8 +428,8 @@ class BeatAudioEngine {
     private func getAudioProcessObjects() -> [AudioObjectID] {
         var prop = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyProcessObjectList,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
+            mScope:    kAudioObjectPropertyScopeGlobal,
+            mElement:  kAudioObjectPropertyElementMain)
         var dataSize: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(sysObj, &prop, 0, nil, &dataSize) == noErr else { return [] }
         let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
@@ -282,8 +442,8 @@ class BeatAudioEngine {
     private func readTapUID(_ id: AudioObjectID) -> String? {
         var prop = AudioObjectPropertyAddress(
             mSelector: kAudioTapPropertyUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
+            mScope:    kAudioObjectPropertyScopeGlobal,
+            mElement:  kAudioObjectPropertyElementMain)
         var cfRef: Unmanaged<CFString>? = nil
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         let ok = withUnsafeMutablePointer(to: &cfRef) {
