@@ -10,6 +10,9 @@ class SettingsWindowController: NSWindowController {
     private var intervalSlider:    NSSlider!
     private var intervalLabel:     NSTextField!
     private var bpmLabel:          NSTextField!
+    private var beatMeter:         NSProgressIndicator!
+    private var meterLevel:        Double = 0
+    private var pollTick:          Int    = 0
     private var pollTimer:         Timer?
 
     // UserDefaults keys
@@ -23,7 +26,7 @@ class SettingsWindowController: NSWindowController {
         self.engine = engine
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 250),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 280),
             styleMask:   [.titled, .closable, .nonactivatingPanel],
             backing:     .buffered,
             defer:       false)
@@ -43,11 +46,27 @@ class SettingsWindowController: NSWindowController {
     func show() {
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        pollTick = 0
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        // 50 ms tick: meter decays every tick, BPM label updates every 10th tick (500 ms).
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self else { return }
-            let bpm = self.engine.estimatedBPM
-            self.bpmLabel.stringValue = bpm > 0 ? "\(Int(bpm.rounded())) BPM" : "—"
+
+            // Meter: peak on new beat, decay otherwise.
+            let strength = Double(self.engine.lastBeatStrength)
+            if strength > self.meterLevel {
+                self.meterLevel = strength
+            } else {
+                self.meterLevel = max(0, self.meterLevel - 0.08)
+            }
+            self.beatMeter.doubleValue = self.meterLevel
+
+            // BPM label: update every 500 ms.
+            self.pollTick += 1
+            if self.pollTick % 10 == 0 {
+                let bpm = self.engine.estimatedBPM
+                self.bpmLabel.stringValue = bpm > 0 ? "\(Int(bpm.rounded())) BPM" : "—"
+            }
         }
     }
 
@@ -65,33 +84,45 @@ class SettingsWindowController: NSWindowController {
         let vw: CGFloat = 44    // value-label width
 
         // ── Row 1: Frequency Band ─────────────────────────────────────────
-        addLabel("Beat Source:", x: lx, y: 203, w: lw, in: cv)
+        addLabel("Beat Source:", x: lx, y: 233, w: lw, in: cv)
         bandControl = NSSegmentedControl(
             labels:       FrequencyBand.allCases.map(\.label),
             trackingMode: .selectOne,
             target:       self,
             action:       #selector(bandChanged))
-        bandControl.frame = NSRect(x: cx, y: 200, width: cw + vw + 4, height: 26)
+        bandControl.frame = NSRect(x: cx, y: 230, width: cw + vw + 4, height: 26)
         cv.addSubview(bandControl)
 
         // ── Row 2: Sensitivity ────────────────────────────────────────────
-        addLabel("Sensitivity:", x: lx, y: 157, w: lw, in: cv)
+        addLabel("Sensitivity:", x: lx, y: 187, w: lw, in: cv)
         sensitivitySlider = addSlider(min: 0.1, max: 1.0, val: 0.5,
-                                      x: cx, y: 155, w: cw, in: cv,
+                                      x: cx, y: 185, w: cw, in: cv,
                                       action: #selector(sensitivityChanged))
-        sensitivityLabel = addValueLabel(x: vx, y: 155, w: vw, in: cv)
+        sensitivityLabel = addValueLabel(x: vx, y: 185, w: vw, in: cv)
 
         // ── Row 3: Min Beat Gap ───────────────────────────────────────────
-        addLabel("Min Beat Gap:", x: lx, y: 107, w: lw, in: cv)
+        addLabel("Min Beat Gap:", x: lx, y: 137, w: lw, in: cv)
         intervalSlider = addSlider(min: 50, max: 500, val: 140,
-                                   x: cx, y: 105, w: cw, in: cv,
+                                   x: cx, y: 135, w: cw, in: cv,
                                    action: #selector(intervalChanged))
-        intervalLabel = addValueLabel(x: vx, y: 105, w: vw, in: cv)
+        intervalLabel = addValueLabel(x: vx, y: 135, w: vw, in: cv)
 
-        // ── Row 4: BPM readout (read-only) ────────────────────────────────
-        addLabel("Estimated BPM:", x: lx, y: 57, w: lw, in: cv)
-        bpmLabel = addValueLabel(x: cx, y: 57, w: 100, in: cv)
+        // ── Row 4: BPM readout ────────────────────────────────────────────
+        addLabel("Estimated BPM:", x: lx, y: 87, w: lw, in: cv)
+        bpmLabel = addValueLabel(x: cx, y: 87, w: 100, in: cv)
         bpmLabel.stringValue = "—"
+
+        // ── Row 5: Beat meter ─────────────────────────────────────────────
+        addLabel("Beat Strength:", x: lx, y: 55, w: lw, in: cv)
+        beatMeter = NSProgressIndicator()
+        beatMeter.style        = .bar
+        beatMeter.isIndeterminate = false
+        beatMeter.minValue     = 0
+        beatMeter.maxValue     = 1
+        beatMeter.doubleValue  = 0
+        beatMeter.controlSize  = .small
+        beatMeter.frame        = NSRect(x: cx, y: 58, width: cw + vw + 4, height: 12)
+        cv.addSubview(beatMeter)
 
         // ── Reset button ──────────────────────────────────────────────────
         let reset = NSButton(title: "Reset Defaults",

@@ -75,9 +75,12 @@ class BeatAudioEngine {
     private var  minBeatInterval: TimeInterval = 0.14
     private var  beatCount = 0
 
-    // ── BPM estimation ───────────────────────────────────────────────────
-    private var  beatIntervals: [Double] = []   // last 16 inter-beat intervals (s)
-    private(set) var estimatedBPM: Float = 0
+    // ── BPM estimation + beat prediction ────────────────────────────────
+    private var  beatIntervals:   [Double] = []  // last 16 inter-beat intervals (s)
+    private(set) var estimatedBPM: Float   = 0
+    private(set) var lastBeatStrength: Float = 0 // intensity of most recent beat (0–1)
+    private var  lastRealBeatTime = Date.distantPast  // updated only by real beats
+    private var  predictionTimer: DispatchSourceTimer?
 
     // ── FFT + spectral flux ──────────────────────────────────────────────
     private let  fftLog2n: vDSP_Length = 11   // 2048-point FFT
@@ -130,7 +133,8 @@ class BeatAudioEngine {
     func stop() {
         guard isRunning else { return }
         isRunning = false
-        healthTimer?.cancel(); healthTimer = nil
+        healthTimer?.cancel();    healthTimer = nil
+        predictionTimer?.cancel(); predictionTimer = nil
         removeDeviceChangeListener()
         teardownTap()
         NSLog("BeatKeys: stopped")
@@ -174,6 +178,7 @@ class BeatAudioEngine {
     // MARK: - Tap Lifecycle
 
     private func teardownTap() {
+        predictionTimer?.cancel(); predictionTimer = nil
         if let p = ioProcID {
             AudioDeviceStop(aggregateID, p)
             AudioDeviceDestroyIOProcID(aggregateID, p)
@@ -253,6 +258,7 @@ class BeatAudioEngine {
         fftAccumCount = 0; lastFlux = 0
         prevMagnitude = [Float](repeating: 0, count: fftSize / 2)
         beatIntervals = []; estimatedBPM = 0
+        lastBeatStrength = 0; lastRealBeatTime = Date.distantPast
 
         guard AudioDeviceStart(aggregateID, p) == noErr else {
             NSLog("BeatKeys: ❌ DeviceStart failed"); teardownTap(); return
@@ -261,6 +267,7 @@ class BeatAudioEngine {
         isRunning = true
         NSLog("BeatKeys: ✅ Tap running on %@ (%d procs)", outUID, procs.count)
         startHealthMonitor()
+        startPredictionTimer()
     }
 
     // MARK: - Health Monitor
@@ -291,6 +298,43 @@ class BeatAudioEngine {
             NSLog("BeatKeys: 🔄 Recreating tap (silence)")
             teardownTap(); Thread.sleep(forTimeInterval: 0.5); setupTap()
         }
+    }
+
+    // MARK: - Beat Prediction
+
+    private func startPredictionTimer() {
+        predictionTimer?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+        t.schedule(deadline: .now() + 1.0, repeating: 0.02)  // 50 Hz, 1s startup delay
+        t.setEventHandler { [weak self] in self?.checkPrediction() }
+        t.resume()
+        predictionTimer = t
+    }
+
+    /// Fires a predicted beat when a real beat is overdue based on estimated BPM.
+    /// Requires ≥8 intervals for a stable estimate and recent music activity.
+    private func checkPrediction() {
+        guard isRunning,
+              estimatedBPM > 0,
+              beatIntervals.count >= 8 else { return }
+
+        let now = Date()
+
+        // Only predict while music is actively playing (real beat in last 3s).
+        guard now.timeIntervalSince(lastRealBeatTime) < 3.0 else { return }
+
+        let expected = 60.0 / Double(estimatedBPM)
+        let elapsed  = now.timeIntervalSince(lastBeatTime)
+
+        // Fire in the window [92 %, 108 %] of the expected interval.
+        guard elapsed >= expected * 0.92,
+              elapsed <= expected * 1.08 else { return }
+
+        // Update lastBeatTime so this prediction doesn't fire again immediately.
+        lastBeatTime = now
+
+        let cb = onBeat
+        DispatchQueue.main.async { cb?(0.5) }  // moderate intensity; don't update BPM
     }
 
     // MARK: - Beat Detection (IO thread)
@@ -340,8 +384,10 @@ class BeatAudioEngine {
         let intensity = min(1.0, (flux - threshold) / max(threshold, 1e-9))
 
         let interval = now.timeIntervalSince(lastBeatTime)
-        lastBeatTime = now
-        beatCount   += 1
+        lastBeatTime     = now
+        lastRealBeatTime = now
+        lastBeatStrength = intensity
+        beatCount       += 1
 
         // Update BPM estimate from inter-beat interval (plausible range: 24–300 BPM).
         if interval > 0.2 && interval < 2.5 {

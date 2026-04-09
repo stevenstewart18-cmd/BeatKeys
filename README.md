@@ -16,7 +16,8 @@ BeatKeys is a spiritual successor to **iSpazz**, the beloved iTunes visualizer p
 - **Beat intensity scaling** — loud kicks dip the backlight deeper; quiet hi-hats produce a shallower flash, proportional to how strong the beat was
 - **Breathing animation** — after 2 seconds of silence the backlight slowly pulses in a sine-wave pattern; the next detected beat snaps it back to beat-sync mode
 - **Animated menu bar icon** — the keycap flashes orange on every beat, so you can confirm detection is working without looking at the keyboard
-- **BPM display** — Settings window shows a live estimated BPM, updated every half second
+- **BPM display + beat prediction** — estimates tempo from the last 16 inter-beat intervals; once stable, predicts and fills in missed beats so the light stays in sync even when the detector misses one
+- **Live beat strength meter** — Settings window shows a bar that peaks on every beat and decays smoothly, giving real-time visibility into what the detector is seeing
 - Frequency band selector: All / Bass / Rhythm / Highs (targets specific spectral ranges for different music styles)
 - Adjustable sensitivity and minimum beat gap
 - Automatically follows audio device switches (speakers, AirPods, Bluetooth)
