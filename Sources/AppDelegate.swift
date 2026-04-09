@@ -15,7 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.imageScaling = .scaleProportionallyDown
         buildMenu()
 
-        audioEngine.onBeat = { [weak self] in self?.onBeat() }
+        audioEngine.onBeat = { [weak self] intensity in self?.onBeat(intensity) }
 
         KeyboardController.shared.setMaxAndSnapshot()
         start()
@@ -67,7 +67,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardController.shared.restore()
     }
 
-    func onBeat() { KeyboardController.shared.pulse() }
+    func onBeat(_ intensity: Float) {
+        KeyboardController.shared.pulse(intensity: intensity)
+        guard isActive else { return }
+        statusItem.button?.image = makeStatusIcon(active: true, beat: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self, self.isActive else { return }
+            self.statusItem.button?.image = self.makeStatusIcon(active: true)
+        }
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         audioEngine.stop()
@@ -76,14 +84,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: — Menu bar icon
 
-    private func makeStatusIcon(active: Bool) -> NSImage {
+    private func makeStatusIcon(active: Bool, beat: Bool = false) -> NSImage {
         let img = NSImage(size: NSSize(width: 22, height: 22), flipped: true) { _ in
             // flipped: true → y=0 at top, y increases downward (matches design coords)
             let iconColor = NSColor.labelColor.withAlphaComponent(0.85)
 
-            // ── Keycap (stroke only, adapts to light/dark via labelColor) ──
+            // ── Keycap — filled with accent on beat, stroke-only otherwise ──
             let keycap = NSBezierPath(roundedRect: NSRect(x: 0.5, y: 0.5, width: 18.5, height: 18),
                                       xRadius: 4, yRadius: 4)
+            if beat {
+                NSColor.systemOrange.withAlphaComponent(0.85).setFill()
+                keycap.fill()
+            }
             keycap.lineWidth = 1.5
             iconColor.setStroke()
             keycap.stroke()

@@ -34,17 +34,19 @@ enum FrequencyBand: Int, CaseIterable {
 
 class BeatAudioEngine {
 
-    var onBeat: (() -> Void)?
+    var onBeat: ((Float) -> Void)?   // intensity: 0–1 (how far above threshold the beat was)
 
     // ── Tunable parameters (safe to set from any thread before beat fires) ──
     var sensitivity: Float = 0.5
 
     var frequencyBand: FrequencyBand = .fullSpectrum {
         didSet {
-            // Reset FFT accumulator so the new band takes effect immediately
-            // rather than waiting for the tail of a mismatched window.
+            // Reset FFT accumulator and prev-magnitude so the new band takes
+            // effect immediately without comparing stale cross-band magnitudes.
             fftAccumCount = 0
-            lastBandRMS   = 0
+            lastFlux      = 0
+            let halfN     = fftSize / 2
+            prevMagnitude = [Float](repeating: 0, count: halfN)
         }
     }
 
@@ -65,15 +67,19 @@ class BeatAudioEngine {
     private var callbackCount = 0
     private var nonZeroCount  = 0
 
-    // ── Beat detection: large ring buffer + adaptive threshold ───────────
-    private let  bufSize = 500
+    // ── Beat detection: ring buffer + adaptive threshold ─────────────────
+    private let  bufSize = 200
     private var  ringBuf: [Float] = []
     private var  ringIdx = 0
     private var  lastBeatTime    = Date.distantPast
     private var  minBeatInterval: TimeInterval = 0.14
     private var  beatCount = 0
 
-    // ── FFT for frequency-band filtering ────────────────────────────────
+    // ── BPM estimation ───────────────────────────────────────────────────
+    private var  beatIntervals: [Double] = []   // last 16 inter-beat intervals (s)
+    private(set) var estimatedBPM: Float = 0
+
+    // ── FFT + spectral flux ──────────────────────────────────────────────
     private let  fftLog2n: vDSP_Length = 11   // 2048-point FFT
     private let  fftSize  = 2048
     private var  fftSetup: FFTSetup?
@@ -82,7 +88,8 @@ class BeatAudioEngine {
     private var  fftImagp:     [Float] = []
     private var  fftAccum:     [Float] = []   // mono-sample accumulator
     private var  fftAccumCount = 0
-    private var  lastBandRMS:  Float   = 0
+    private var  lastFlux:     Float   = 0    // cached result between FFT frames
+    private var  prevMagnitude:[Float] = []   // per-bin magnitudes from previous frame
     private var  sampleRate:   Float   = 44100
 
     // ── Auto-recovery ────────────────────────────────────────────────────
@@ -103,6 +110,7 @@ class BeatAudioEngine {
         fftRealp    = [Float](repeating: 0, count: halfN)
         fftImagp    = [Float](repeating: 0, count: halfN)
         fftAccum    = [Float](repeating: 0, count: fftSize)
+        prevMagnitude = [Float](repeating: 0, count: halfN)
     }
 
     deinit {
@@ -242,7 +250,9 @@ class BeatAudioEngine {
         lastNonZeroCount = 0; staleSilenceRuns = 0
         ringBuf      = [Float](repeating: 0, count: bufSize)
         ringIdx      = 0
-        fftAccumCount = 0; lastBandRMS = 0
+        fftAccumCount = 0; lastFlux = 0
+        prevMagnitude = [Float](repeating: 0, count: fftSize / 2)
+        beatIntervals = []; estimatedBPM = 0
 
         guard AudioDeviceStart(aggregateID, p) == noErr else {
             NSLog("BeatKeys: ❌ DeviceStart failed"); teardownTap(); return
@@ -302,57 +312,76 @@ class BeatAudioEngine {
         callbackCount += 1
         if fullRMS > 0.0001 { nonZeroCount += 1 }
 
-        // Select the energy measure fed into the beat-detection ring buffer.
-        // Band modes use FFT-derived RMS so the adaptive threshold is
-        // calibrated against the same spectral slice being tested.
-        let rms: Float = frequencyBand == .fullSpectrum
-            ? fullRMS
-            : bandRMS(samples: samples, stride: ch, frames: frames)
+        // Gate: don't run beat detection on inaudible audio.
+        guard fullRMS > 0.0001 else { return }
 
-        ringBuf[ringIdx % bufSize] = rms
+        // Spectral flux accumulates samples into a 2048-point FFT window.
+        // Returns the half-wave-rectified flux for the selected band.
+        // Fires on transients (note onsets, drum hits) rather than sustained energy.
+        let flux = accumAndComputeFlux(samples: samples, stride: ch, frames: frames)
+
+        ringBuf[ringIdx % bufSize] = flux
         ringIdx += 1
 
-        guard ringIdx > 100 else { return }
+        guard ringIdx > 30 else { return }
 
         var mean: Float = 0
         vDSP_meanv(ringBuf, 1, &mean, vDSP_Length(bufSize))
 
-        let multiplier: Float = 1.3 + (1.0 - sensitivity) * 0.5
+        let multiplier: Float = 1.15 + (1.0 - sensitivity) * 0.4
         let threshold = mean * multiplier
 
         let now = Date()
-        guard rms > threshold,
-              rms > 0.002,
+        guard flux > threshold,
               now.timeIntervalSince(lastBeatTime) > minBeatInterval
         else { return }
 
+        // Intensity: how far above the threshold this beat landed, clamped 0–1.
+        let intensity = min(1.0, (flux - threshold) / max(threshold, 1e-9))
+
+        let interval = now.timeIntervalSince(lastBeatTime)
         lastBeatTime = now
         beatCount   += 1
+
+        // Update BPM estimate from inter-beat interval (plausible range: 24–300 BPM).
+        if interval > 0.2 && interval < 2.5 {
+            if beatIntervals.count >= 16 { beatIntervals.removeFirst() }
+            beatIntervals.append(interval)
+            if beatIntervals.count >= 4 {
+                let sorted = beatIntervals.sorted()
+                let median = sorted[sorted.count / 2]
+                estimatedBPM = Float(60.0 / median)
+            }
+        }
+
         let cb = onBeat
-        DispatchQueue.main.async { cb?() }
+        DispatchQueue.main.async { cb?(intensity) }
     }
 
-    // MARK: - Frequency Band RMS (IO thread)
+    // MARK: - Spectral Flux (IO thread)
 
-    /// Accumulates mono samples into a 2048-point window, then returns the
-    /// band-limited RMS via FFT. Returns the previous result while filling.
-    private func bandRMS(samples: UnsafePointer<Float>,
-                         stride:  Int,
-                         frames:  Int) -> Float {
+    /// Accumulates mono samples into a 2048-point window, then computes
+    /// spectral flux for the selected band. Returns the cached result while filling.
+    private func accumAndComputeFlux(samples: UnsafePointer<Float>,
+                                     stride:  Int,
+                                     frames:  Int) -> Float {
         let space = fftSize - fftAccumCount
         let copy  = min(frames, space)
         for i in 0..<copy {
             fftAccum[fftAccumCount + i] = samples[i * stride]
         }
         fftAccumCount += copy
-        guard fftAccumCount >= fftSize else { return lastBandRMS }
+        guard fftAccumCount >= fftSize else { return lastFlux }
 
-        lastBandRMS   = computeFFTBandRMS()
+        lastFlux      = computeFFTFlux()
         fftAccumCount = 0
-        return lastBandRMS
+        return lastFlux
     }
 
-    private func computeFFTBandRMS() -> Float {
+    /// Computes half-wave-rectified spectral flux over the selected frequency band.
+    /// Flux = Σ max(0, |X_n[k]| - |X_{n-1}[k]|) for k in band bins.
+    /// Spikes on transients (drum hits, note onsets); stays low during sustained sound.
+    private func computeFFTFlux() -> Float {
         guard let setup = fftSetup else { return 0 }
 
         let halfN = fftSize / 2
@@ -372,23 +401,28 @@ class BeatAudioEngine {
         var split = DSPSplitComplex(realp: &fftRealp, imagp: &fftImagp)
         vDSP_fft_zrip(setup, &split, 1, fftLog2n, FFTDirection(FFT_FORWARD))
 
-        // Squared magnitudes (power spectrum).
+        // Power spectrum (squared magnitudes).
         var power = [Float](repeating: 0, count: halfN)
         vDSP_zvmags(&split, 1, &power, 1, vDSP_Length(halfN))
 
-        // Map Hz range → bin indices and average power in that slice.
+        // Map the selected band's Hz range to FFT bin indices.
+        // fullSpectrum skips DC (bin 0) and uses all remaining bins.
         let binHz = sampleRate / Float(fftSize)
         let range = frequencyBand.range
         let loBin = max(1,       Int((range.lo / binHz).rounded()))
         let hiBin = min(halfN-1, Int((range.hi / binHz).rounded()))
         guard loBin <= hiBin else { return 0 }
 
-        var meanPower: Float = 0
-        let count = hiBin - loBin + 1
-        vDSP_meanv(Array(power[loBin...hiBin]), 1, &meanPower, vDSP_Length(count))
-
-        // sqrt(mean power) → RMS; divide by N to normalise for window size.
-        return sqrt(meanPower) / Float(fftSize)
+        // Half-wave-rectified flux: sum of magnitude increases vs previous frame.
+        var flux: Float = 0
+        for i in loBin...hiBin {
+            let mag  = sqrt(power[i])
+            let diff = mag - prevMagnitude[i]
+            if diff > 0 { flux += diff }
+            prevMagnitude[i] = mag
+        }
+        // Normalize by bin count and window size so the scale matches the ring buffer.
+        return flux / Float(hiBin - loBin + 1) / Float(fftSize)
     }
 
     // MARK: - CoreAudio Helpers

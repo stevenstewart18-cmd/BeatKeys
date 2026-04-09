@@ -12,7 +12,13 @@ BeatKeys is a spiritual successor to **iSpazz**, the beloved iTunes visualizer p
 
 - Keyboard backlight pulses to the beat of any system audio
 - Runs entirely in the menu bar — no dock icon, no windows
-- Three sensitivity levels (Low, Medium, High)
+- **Spectral flux beat detection** — fires on transients (drum hits, note attacks) rather than sustained loudness, so pads and reverb tails don't trigger false beats
+- **Beat intensity scaling** — loud kicks dip the backlight deeper; quiet hi-hats produce a shallower flash, proportional to how strong the beat was
+- **Breathing animation** — after 2 seconds of silence the backlight slowly pulses in a sine-wave pattern; the next detected beat snaps it back to beat-sync mode
+- **Animated menu bar icon** — the keycap flashes orange on every beat, so you can confirm detection is working without looking at the keyboard
+- **BPM display** — Settings window shows a live estimated BPM, updated every half second
+- Frequency band selector: All / Bass / Rhythm / Highs (targets specific spectral ranges for different music styles)
+- Adjustable sensitivity and minimum beat gap
 - Automatically follows audio device switches (speakers, AirPods, Bluetooth)
 - Auto-recovers if audio goes silent
 - Requires macOS 14.2 or later

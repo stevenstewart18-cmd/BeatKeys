@@ -11,6 +11,10 @@ class KeyboardController {
     private var isLoaded = false
     private var pulseInFlight = false
 
+    private var breathTimer:       DispatchSourceTimer?
+    private var breathPhase:       Float = 0
+    private var breathRestartItem: DispatchWorkItem?
+
     private typealias GetBrightnessFn = @convention(c) (AnyObject, Selector, UInt64) -> Float
     private typealias SetBrightnessFn = @convention(c) (AnyObject, Selector, Float, UInt64) -> Bool
     private typealias SetFadeFn       = @convention(c) (AnyObject, Selector, Float, Int32, Bool, UInt64) -> Bool
@@ -69,29 +73,66 @@ class KeyboardController {
         homeBrightness = 1.0
     }
 
-    func pulse() {
+    func pulse(intensity: Float = 1.0) {
+        // Every beat: cancel pending breath restart and stop active breathing.
+        breathRestartItem?.cancel()
+        breathRestartItem = nil
+        breathTimer?.cancel()
+        breathTimer = nil
+
         guard !pulseInFlight else { return }
         pulseInFlight = true
 
-        let home = homeBrightness
-        let dip  = max(0.05, home - 0.5)
+        let home  = homeBrightness
+        // Scale dip depth by intensity: floor at 0.3 so weak beats are still visible.
+        let depth = 0.75 * max(0.3, min(1.0, intensity))
+        let dip   = max(0.0, home - depth)
 
-        setBrightness(dip, fadeSpeed: 25)
+        setBrightness(dip, fadeSpeed: 5)    // near-instant snap (0 uses a broken selector path)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) { [weak self] in
-            let mid = dip + (home - dip) * 0.55
-            self?.setBrightness(mid, fadeSpeed: 90)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) { [weak self] in
+            self?.setBrightness(home, fadeSpeed: 80)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
-            self?.setBrightness(home, fadeSpeed: 120)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { [weak self] in
-            self?.pulseInFlight = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+            guard let self else { return }
+            self.pulseInFlight = false
+            // Schedule breathing to start after 2s of silence.
+            let item = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.breathPhase = Float.pi   // start from home brightness, breathe down
+                self.startBreathing()
+            }
+            self.breathRestartItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: item)
         }
     }
 
     func restore() {
+        breathRestartItem?.cancel()
+        breathRestartItem = nil
+        breathTimer?.cancel()
+        breathTimer = nil
         pulseInFlight = false
         setBrightness(homeBrightness, fadeSpeed: 150)
+    }
+
+    // MARK: - Breathing
+
+    private func startBreathing() {
+        guard breathTimer == nil else { return }
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now(), repeating: 1.0 / 30.0)
+        t.setEventHandler { [weak self] in self?.breathTick() }
+        t.resume()
+        breathTimer = t
+    }
+
+    private func breathTick() {
+        // ~0.35 Hz → ~2.9s per full cycle
+        breathPhase += Float.pi * 2.0 * 0.35 / 30.0
+        if breathPhase > Float.pi * 2.0 { breathPhase -= Float.pi * 2.0 }
+        // Oscillates between 0.25 (dim) and 1.0 (bright)
+        let brightness = 0.625 + 0.375 * sin(breathPhase - Float.pi / 2.0)
+        setBrightness(brightness, fadeSpeed: 20)
     }
 }

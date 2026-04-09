@@ -9,6 +9,8 @@ class SettingsWindowController: NSWindowController {
     private var sensitivityLabel:  NSTextField!
     private var intervalSlider:    NSSlider!
     private var intervalLabel:     NSTextField!
+    private var bpmLabel:          NSTextField!
+    private var pollTimer:         Timer?
 
     // UserDefaults keys
     private enum Key {
@@ -21,7 +23,7 @@ class SettingsWindowController: NSWindowController {
         self.engine = engine
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 210),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 250),
             styleMask:   [.titled, .closable, .nonactivatingPanel],
             backing:     .buffered,
             defer:       false)
@@ -31,6 +33,7 @@ class SettingsWindowController: NSWindowController {
         panel.center()
 
         super.init(window: panel)
+        panel.delegate = self
         buildUI()
         loadAndApply()
     }
@@ -40,6 +43,12 @@ class SettingsWindowController: NSWindowController {
     func show() {
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        pollTimer?.invalidate()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let bpm = self.engine.estimatedBPM
+            self.bpmLabel.stringValue = bpm > 0 ? "\(Int(bpm.rounded())) BPM" : "—"
+        }
     }
 
     // MARK: - UI Construction
@@ -56,29 +65,33 @@ class SettingsWindowController: NSWindowController {
         let vw: CGFloat = 44    // value-label width
 
         // ── Row 1: Frequency Band ─────────────────────────────────────────
-        addLabel("Beat Source:", x: lx, y: 163, w: lw, in: cv)
+        addLabel("Beat Source:", x: lx, y: 203, w: lw, in: cv)
         bandControl = NSSegmentedControl(
             labels:       FrequencyBand.allCases.map(\.label),
             trackingMode: .selectOne,
             target:       self,
             action:       #selector(bandChanged))
-        // Stretch to fill the combined slider + value-label column width
-        bandControl.frame = NSRect(x: cx, y: 160, width: cw + vw + 4, height: 26)
+        bandControl.frame = NSRect(x: cx, y: 200, width: cw + vw + 4, height: 26)
         cv.addSubview(bandControl)
 
         // ── Row 2: Sensitivity ────────────────────────────────────────────
-        addLabel("Sensitivity:", x: lx, y: 117, w: lw, in: cv)
+        addLabel("Sensitivity:", x: lx, y: 157, w: lw, in: cv)
         sensitivitySlider = addSlider(min: 0.1, max: 1.0, val: 0.5,
-                                      x: cx, y: 115, w: cw, in: cv,
+                                      x: cx, y: 155, w: cw, in: cv,
                                       action: #selector(sensitivityChanged))
-        sensitivityLabel = addValueLabel(x: vx, y: 115, w: vw, in: cv)
+        sensitivityLabel = addValueLabel(x: vx, y: 155, w: vw, in: cv)
 
         // ── Row 3: Min Beat Gap ───────────────────────────────────────────
-        addLabel("Min Beat Gap:", x: lx, y: 67, w: lw, in: cv)
+        addLabel("Min Beat Gap:", x: lx, y: 107, w: lw, in: cv)
         intervalSlider = addSlider(min: 50, max: 500, val: 140,
-                                   x: cx, y: 65, w: cw, in: cv,
+                                   x: cx, y: 105, w: cw, in: cv,
                                    action: #selector(intervalChanged))
-        intervalLabel = addValueLabel(x: vx, y: 65, w: vw, in: cv)
+        intervalLabel = addValueLabel(x: vx, y: 105, w: vw, in: cv)
+
+        // ── Row 4: BPM readout (read-only) ────────────────────────────────
+        addLabel("Estimated BPM:", x: lx, y: 57, w: lw, in: cv)
+        bpmLabel = addValueLabel(x: cx, y: 57, w: 100, in: cv)
+        bpmLabel.stringValue = "—"
 
         // ── Reset button ──────────────────────────────────────────────────
         let reset = NSButton(title: "Reset Defaults",
@@ -185,5 +198,14 @@ class SettingsWindowController: NSWindowController {
         engine.frequencyBand        = band
 
         updateValueLabels()
+    }
+}
+
+// MARK: - NSWindowDelegate
+
+extension SettingsWindowController: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        pollTimer?.invalidate()
+        pollTimer = nil
     }
 }
