@@ -91,11 +91,11 @@ draw("→",
      color: NSColor(srgbRed: 0.4, green: 0.7, blue: 1.0, alpha: 0.85),
      centerX: cw / 2, y: iconY)
 
-// ── Instruction text ──
+// ── Instruction text — just below the icon labels ──
 draw("Drag BeatKeys to Applications to install",
      font: .systemFont(ofSize: 12, weight: .regular),
      color: NSColor(white: 0.5, alpha: 1),
-     centerX: cw / 2, y: 22)
+     centerX: cw / 2, y: iconY - 44)
 
 NSGraphicsContext.restoreGraphicsState()
 
