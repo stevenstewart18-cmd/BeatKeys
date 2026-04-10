@@ -4,6 +4,7 @@ class SettingsWindowController: NSWindowController {
 
     private let engine: BeatAudioEngine
 
+    private var sourcePopup:        NSPopUpButton!
     private var iconControl:        NSSegmentedControl!
     private var patternControl:     NSSegmentedControl!
     private var bandControl:        NSSegmentedControl!
@@ -26,14 +27,15 @@ class SettingsWindowController: NSWindowController {
         static let frequencyBand = "frequencyBand"
         static let iconMode      = "iconMode"
         static let pulsePattern  = "pulsePattern"
-        static let screenFlash   = "screenFlash"
+        static let screenFlash      = "screenFlash"
+        static let targetBundleIDs  = "targetBundleIDs"
     }
 
     init(engine: BeatAudioEngine) {
         self.engine = engine
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 372),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 530),
             styleMask:   [.titled, .closable, .nonactivatingPanel],
             backing:     .buffered,
             defer:       false)
@@ -90,88 +92,111 @@ class SettingsWindowController: NSWindowController {
         let vx: CGFloat = 296   // value-label x
         let vw: CGFloat = 44    // value-label width
 
-        // ── Row 0: Icon Style ─────────────────────────────────────────────
-        addLabel("Icon Style:", x: lx, y: 325, w: lw, in: cv)
+        // ── Audio Source (y=483) ──────────────────────────────────────────
+        addLabel("Audio Source:", x: lx, y: 483, w: lw, in: cv)
+        sourcePopup = NSPopUpButton(frame: NSRect(x: cx, y: 480, width: cw + vw - 30, height: 26),
+                                    pullsDown: false)
+        sourcePopup.target = self
+        sourcePopup.action = #selector(sourceChanged)
+        cv.addSubview(sourcePopup)
+        let refreshBtn = NSButton(title: "↺", target: self, action: #selector(refreshSources))
+        refreshBtn.bezelStyle = .rounded
+        refreshBtn.frame = NSRect(x: cx + cw + vw - 28, y: 480, width: 28, height: 26)
+        cv.addSubview(refreshBtn)
+
+        // ── Icon Style (y=437) ────────────────────────────────────────────
+        addLabel("Icon Style:", x: lx, y: 437, w: lw, in: cv)
         iconControl = NSSegmentedControl(
             labels:       ["Full", "Minimal"],
             trackingMode: .selectOne,
             target:       self,
             action:       #selector(iconChanged))
-        iconControl.frame = NSRect(x: cx, y: 322, width: 120, height: 26)
+        iconControl.frame = NSRect(x: cx, y: 434, width: 120, height: 26)
         cv.addSubview(iconControl)
 
-        // ── Row 1: Pulse Pattern ──────────────────────────────────────────
-        addLabel("Pulse Pattern:", x: lx, y: 279, w: lw, in: cv)
+        // ── Pulse Pattern (y=391) ─────────────────────────────────────────
+        addLabel("Pulse Pattern:", x: lx, y: 391, w: lw, in: cv)
         patternControl = NSSegmentedControl(
             labels:       PulsePattern.allCases.map(\.label),
             trackingMode: .selectOne,
             target:       self,
             action:       #selector(patternChanged))
-        patternControl.frame = NSRect(x: cx, y: 276, width: cw + vw + 4, height: 26)
+        patternControl.frame = NSRect(x: cx, y: 388, width: cw + vw + 4, height: 26)
         cv.addSubview(patternControl)
 
-        // ── Row 2: Frequency Band ─────────────────────────────────────────
-        addLabel("Beat Source:", x: lx, y: 233, w: lw, in: cv)
+        // ── Beat Source (y=345) ───────────────────────────────────────────
+        addLabel("Beat Source:", x: lx, y: 345, w: lw, in: cv)
         bandControl = NSSegmentedControl(
             labels:       FrequencyBand.allCases.map(\.label),
             trackingMode: .selectOne,
             target:       self,
             action:       #selector(bandChanged))
-        bandControl.frame = NSRect(x: cx, y: 230, width: cw + vw + 4, height: 26)
+        bandControl.frame = NSRect(x: cx, y: 342, width: cw + vw + 4, height: 26)
         cv.addSubview(bandControl)
 
-        // ── Row 3: Sensitivity ────────────────────────────────────────────
-        addLabel("Sensitivity:", x: lx, y: 187, w: lw, in: cv)
+        // ── Sensitivity (y=299) ───────────────────────────────────────────
+        addLabel("Sensitivity:", x: lx, y: 299, w: lw, in: cv)
         sensitivitySlider = addSlider(min: 0.1, max: 1.0, val: 0.5,
-                                      x: cx, y: 185, w: cw - 90, in: cv,
+                                      x: cx, y: 297, w: cw - 90, in: cv,
                                       action: #selector(sensitivityChanged))
-        sensitivityLabel = addValueLabel(x: vx - 86, y: 185, w: vw, in: cv)
+        sensitivityLabel = addValueLabel(x: vx - 86, y: 297, w: vw, in: cv)
         calibrateButton = NSButton(title: "Calibrate", target: self,
                                    action: #selector(calibrateTapped))
         calibrateButton.bezelStyle = .rounded
         calibrateButton.controlSize = .small
-        calibrateButton.frame = NSRect(x: vx - 86 + vw + 4, y: 183, width: 82, height: 22)
+        calibrateButton.frame = NSRect(x: vx - 86 + vw + 4, y: 295, width: 82, height: 22)
         cv.addSubview(calibrateButton)
 
-        // ── Row 3: Min Beat Gap ───────────────────────────────────────────
-        addLabel("Min Beat Gap:", x: lx, y: 137, w: lw, in: cv)
+        // ── Min Beat Gap (y=249) ──────────────────────────────────────────
+        addLabel("Min Beat Gap:", x: lx, y: 249, w: lw, in: cv)
         intervalSlider = addSlider(min: 50, max: 500, val: 140,
-                                   x: cx, y: 135, w: cw, in: cv,
+                                   x: cx, y: 247, w: cw, in: cv,
                                    action: #selector(intervalChanged))
-        intervalLabel = addValueLabel(x: vx, y: 135, w: vw, in: cv)
+        intervalLabel = addValueLabel(x: vx, y: 247, w: vw, in: cv)
 
-        // ── Row 4: Screen Flash ───────────────────────────────────────────
-        addLabel("Screen Flash:", x: lx, y: 107, w: lw, in: cv)
+        // ── Screen Flash (y=203) ──────────────────────────────────────────
+        addLabel("Screen Flash:", x: lx, y: 203, w: lw, in: cv)
         screenFlashCheck = NSButton(checkboxWithTitle: "Flash screen edges on beat",
                                     target: self, action: #selector(screenFlashChanged))
-        screenFlashCheck.frame = NSRect(x: cx, y: 105, width: cw + vw + 4, height: 20)
+        screenFlashCheck.frame = NSRect(x: cx, y: 201, width: cw + vw + 4, height: 20)
         cv.addSubview(screenFlashCheck)
 
-        // ── Row 5: BPM readout ────────────────────────────────────────────
-        addLabel("Estimated BPM:", x: lx, y: 87, w: lw, in: cv)
-        bpmLabel = addValueLabel(x: cx, y: 87, w: 100, in: cv)
+        // ── BPM readout (y=153) ───────────────────────────────────────────
+        addLabel("Estimated BPM:", x: lx, y: 153, w: lw, in: cv)
+        bpmLabel = addValueLabel(x: cx, y: 153, w: 100, in: cv)
         bpmLabel.stringValue = "—"
 
-        // ── Row 5: Beat meter ─────────────────────────────────────────────
-        addLabel("Beat Strength:", x: lx, y: 55, w: lw, in: cv)
+        // ── Beat meter (y=121) ────────────────────────────────────────────
+        addLabel("Beat Strength:", x: lx, y: 121, w: lw, in: cv)
         beatMeter = NSProgressIndicator()
-        beatMeter.style        = .bar
+        beatMeter.style           = .bar
         beatMeter.isIndeterminate = false
-        beatMeter.minValue     = 0
-        beatMeter.maxValue     = 1
-        beatMeter.doubleValue  = 0
-        beatMeter.controlSize  = .small
-        beatMeter.frame        = NSRect(x: cx, y: 58, width: cw + vw + 4, height: 12)
+        beatMeter.minValue        = 0
+        beatMeter.maxValue        = 1
+        beatMeter.doubleValue     = 0
+        beatMeter.controlSize     = .small
+        beatMeter.frame           = NSRect(x: cx, y: 124, width: cw + vw + 4, height: 12)
         cv.addSubview(beatMeter)
 
-        // ── Reset button ──────────────────────────────────────────────────
+        // ── Reset button (y=16) ───────────────────────────────────────────
         let reset = NSButton(title: "Reset Defaults",
                              target: self, action: #selector(resetDefaults))
         reset.bezelStyle = .rounded
         reset.frame = NSRect(x: cx, y: 16, width: 130, height: 28)
         cv.addSubview(reset)
 
+        populateSources()
         updateValueLabels()
+    }
+
+    private func populateSources() {
+        sourcePopup.removeAllItems()
+        sourcePopup.addItem(withTitle: "All Apps")
+        sourcePopup.item(at: 0)?.representedObject = nil
+        for proc in engine.getRunningAudioProcessInfo() {
+            sourcePopup.addItem(withTitle: proc.name)
+            sourcePopup.lastItem?.representedObject = proc.bundleID
+        }
     }
 
     // MARK: - Layout Helpers
@@ -218,6 +243,32 @@ class SettingsWindowController: NSWindowController {
         if let delegate = NSApp.delegate as? AppDelegate {
             delegate.iconMode = mode
             delegate.refreshStatusIcon()
+        }
+    }
+
+    @objc private func sourceChanged() {
+        let idx = sourcePopup.indexOfSelectedItem
+        if idx <= 0 {
+            engine.targetBundleIDs = nil
+            UserDefaults.standard.removeObject(forKey: Key.targetBundleIDs)
+        } else if let bid = sourcePopup.selectedItem?.representedObject as? String {
+            engine.targetBundleIDs = [bid]
+            UserDefaults.standard.set([bid], forKey: Key.targetBundleIDs)
+        }
+        engine.refreshTapForTargets()
+    }
+
+    @objc private func refreshSources() {
+        let currentBID = sourcePopup.selectedItem?.representedObject as? String
+        populateSources()
+        // Re-select the previously selected item if it still exists.
+        if let bid = currentBID,
+           let idx = (0..<sourcePopup.numberOfItems).first(where: {
+               sourcePopup.item(at: $0)?.representedObject as? String == bid
+           }) {
+            sourcePopup.selectItem(at: idx)
+        } else {
+            sourcePopup.selectItem(at: 0)
         }
     }
 
@@ -285,12 +336,14 @@ class SettingsWindowController: NSWindowController {
         iconControl.selectedSegment    = IconMode.full.rawValue
         patternControl.selectedSegment = PulsePattern.pulse.rawValue
         screenFlashCheck.state         = .off
+        sourcePopup.selectItem(at: 0)
         sensitivityChanged()
         intervalChanged()
         bandChanged()
         iconChanged()
         patternChanged()
         screenFlashChanged()
+        sourceChanged()
     }
 
     // MARK: - State
@@ -338,6 +391,21 @@ class SettingsWindowController: NSWindowController {
         screenFlashCheck.state = flashOn ? .on : .off
         if let delegate = NSApp.delegate as? AppDelegate {
             delegate.screenFlash.isEnabled = flashOn
+        }
+
+        // Restore audio source targeting.
+        if let bids = ud.stringArray(forKey: Key.targetBundleIDs), !bids.isEmpty {
+            engine.targetBundleIDs = Set(bids)
+            // Select matching item in popup if present.
+            let bid = bids[0]
+            if let idx = (0..<sourcePopup.numberOfItems).first(where: {
+                sourcePopup.item(at: $0)?.representedObject as? String == bid
+            }) {
+                sourcePopup.selectItem(at: idx)
+            }
+        } else {
+            engine.targetBundleIDs = nil
+            sourcePopup.selectItem(at: 0)
         }
 
         updateValueLabels()

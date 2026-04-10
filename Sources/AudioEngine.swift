@@ -1,6 +1,7 @@
 import CoreAudio
 import Accelerate
 import Foundation
+import AppKit
 
 // MARK: - FrequencyBand
 
@@ -36,12 +37,21 @@ enum FrequencyBand: Int, CaseIterable {
 
 // MARK: - BeatAudioEngine
 
+struct AudioProcess {
+    let objectID: AudioObjectID
+    let bundleID: String
+    let name: String
+}
+
 class BeatAudioEngine {
 
     var onBeat: ((Float) -> Void)?   // intensity: 0–1 (how far above threshold the beat was)
 
     // ── Tunable parameters (safe to set from any thread before beat fires) ──
     var sensitivity: Float = 0.5
+
+    /// nil = tap all apps (default); non-nil = tap only these bundle IDs.
+    var targetBundleIDs: Set<String>? = nil
 
     // Multi-band fusion weights (bass + rhythm + highs); sum need not equal 1.
     private let bandWeights = (bass: Float(0.5), rhythm: Float(0.3), highs: Float(0.2))
@@ -231,9 +241,19 @@ class BeatAudioEngine {
             NSLog("BeatKeys: ❌ No output device"); return
         }
         currentOutputUID = outUID
-        let procs = getAudioProcessObjects()
-        guard !procs.isEmpty else {
+        let allProcs = getAudioProcessObjects()
+        guard !allProcs.isEmpty else {
             NSLog("BeatKeys: ❌ No audio processes"); return
+        }
+
+        // Filter to targeted bundle IDs if set; fall back to all procs if nothing matches.
+        let procs: [AudioObjectID]
+        if let targets = targetBundleIDs, !targets.isEmpty {
+            let filtered = allProcs.filter { getBundleID(for: $0).map { targets.contains($0) } ?? false }
+            procs = filtered.isEmpty ? allProcs : filtered
+            NSLog("BeatKeys: 🎯 Targeting %d/%d procs", procs.count, allProcs.count)
+        } else {
+            procs = allProcs
         }
 
         let desc = CATapDescription(processes: procs, deviceUID: outUID, stream: 0)
@@ -542,5 +562,46 @@ class BeatAudioEngine {
         }
         guard ok == noErr, let ref = cfRef else { return nil }
         return ref.takeRetainedValue() as String
+    }
+
+    private func getBundleID(for objectID: AudioObjectID) -> String? {
+        var prop = AudioObjectPropertyAddress(
+            mSelector: kAudioProcessPropertyBundleID,
+            mScope:    kAudioObjectPropertyScopeGlobal,
+            mElement:  kAudioObjectPropertyElementMain)
+        var cfRef: Unmanaged<CFString>? = nil
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let ok = withUnsafeMutablePointer(to: &cfRef) {
+            AudioObjectGetPropertyData(objectID, &prop, 0, nil, &size, UnsafeMutableRawPointer($0))
+        }
+        guard ok == noErr, let ref = cfRef else { return nil }
+        return ref.takeRetainedValue() as String
+    }
+
+    func getRunningAudioProcessInfo() -> [AudioProcess] {
+        return getAudioProcessObjects().compactMap { id -> AudioProcess? in
+            guard let bid = getBundleID(for: id) else { return nil }
+            var pidProp = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyPID,
+                mScope:    kAudioObjectPropertyScopeGlobal,
+                mElement:  kAudioObjectPropertyElementMain)
+            var pid: pid_t = 0
+            var pidSize = UInt32(MemoryLayout<pid_t>.size)
+            AudioObjectGetPropertyData(id, &pidProp, 0, nil, &pidSize, &pid)
+            let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? bid
+            return AudioProcess(objectID: id, bundleID: bid, name: appName)
+        }
+    }
+
+    func refreshTapForTargets() {
+        guard isRunning, !isRestarting else { return }
+        isRestarting = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            self.teardownTap()
+            Thread.sleep(forTimeInterval: 0.5)
+            self.setupTap()
+            self.isRestarting = false
+        }
     }
 }
