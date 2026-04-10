@@ -24,6 +24,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func buildMenu() {
         let menu = NSMenu()
 
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let versionItem = NSMenuItem(title: "BeatKeys v\(version)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+
+        menu.addItem(.separator())
+
         toggleItem = NSMenuItem(title: "⏹  Stop Beat Sync",
                                 action: #selector(toggleSync), keyEquivalent: "")
         toggleItem.target = self
