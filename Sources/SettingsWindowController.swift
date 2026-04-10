@@ -4,29 +4,31 @@ class SettingsWindowController: NSWindowController {
 
     private let engine: BeatAudioEngine
 
-    private var bandControl:       NSSegmentedControl!
-    private var sensitivitySlider: NSSlider!
-    private var sensitivityLabel:  NSTextField!
-    private var intervalSlider:    NSSlider!
-    private var intervalLabel:     NSTextField!
-    private var bpmLabel:          NSTextField!
-    private var beatMeter:         NSProgressIndicator!
-    private var meterLevel:        Double = 0
-    private var pollTick:          Int    = 0
-    private var pollTimer:         Timer?
+    private var iconControl:        NSSegmentedControl!
+    private var bandControl:        NSSegmentedControl!
+    private var sensitivitySlider:  NSSlider!
+    private var sensitivityLabel:   NSTextField!
+    private var intervalSlider:     NSSlider!
+    private var intervalLabel:      NSTextField!
+    private var bpmLabel:           NSTextField!
+    private var beatMeter:          NSProgressIndicator!
+    private var meterLevel:         Double = 0
+    private var pollTick:           Int    = 0
+    private var pollTimer:          Timer?
 
     // UserDefaults keys
     private enum Key {
         static let sensitivity   = "sensitivity"
         static let minBeatGapMs  = "minBeatGapMs"
         static let frequencyBand = "frequencyBand"
+        static let iconMode      = "iconMode"
     }
 
     init(engine: BeatAudioEngine) {
         self.engine = engine
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 280),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 326),
             styleMask:   [.titled, .closable, .nonactivatingPanel],
             backing:     .buffered,
             defer:       false)
@@ -82,6 +84,16 @@ class SettingsWindowController: NSWindowController {
         let cw: CGFloat = 174   // slider width
         let vx: CGFloat = 296   // value-label x
         let vw: CGFloat = 44    // value-label width
+
+        // ── Row 0: Icon Style ─────────────────────────────────────────────
+        addLabel("Icon Style:", x: lx, y: 279, w: lw, in: cv)
+        iconControl = NSSegmentedControl(
+            labels:       ["Full", "Minimal"],
+            trackingMode: .selectOne,
+            target:       self,
+            action:       #selector(iconChanged))
+        iconControl.frame = NSRect(x: cx, y: 276, width: 120, height: 26)
+        cv.addSubview(iconControl)
 
         // ── Row 1: Frequency Band ─────────────────────────────────────────
         addLabel("Beat Source:", x: lx, y: 233, w: lw, in: cv)
@@ -172,6 +184,15 @@ class SettingsWindowController: NSWindowController {
 
     // MARK: - Actions
 
+    @objc private func iconChanged() {
+        let mode = IconMode(rawValue: iconControl.selectedSegment) ?? .full
+        UserDefaults.standard.set(mode.rawValue, forKey: Key.iconMode)
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.iconMode = mode
+            delegate.refreshStatusIcon()
+        }
+    }
+
     @objc private func bandChanged() {
         let band = FrequencyBand(rawValue: bandControl.selectedSegment) ?? .fullSpectrum
         engine.frequencyBand = band
@@ -196,9 +217,11 @@ class SettingsWindowController: NSWindowController {
         sensitivitySlider.doubleValue  = 0.5
         intervalSlider.doubleValue     = 140
         bandControl.selectedSegment    = FrequencyBand.fullSpectrum.rawValue
+        iconControl.selectedSegment    = IconMode.full.rawValue
         sensitivityChanged()
         intervalChanged()
         bandChanged()
+        iconChanged()
     }
 
     // MARK: - State
@@ -227,6 +250,14 @@ class SettingsWindowController: NSWindowController {
         let band = FrequencyBand(rawValue: bandRaw) ?? .fullSpectrum
         bandControl.selectedSegment = band.rawValue
         engine.frequencyBand        = band
+
+        let iconRaw: Int = ud.object(forKey: Key.iconMode) != nil
+            ? ud.integer(forKey: Key.iconMode) : IconMode.full.rawValue
+        let mode = IconMode(rawValue: iconRaw) ?? .full
+        iconControl.selectedSegment = mode.rawValue
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.iconMode = mode
+        }
 
         updateValueLabels()
     }

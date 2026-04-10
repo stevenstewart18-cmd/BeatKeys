@@ -1,15 +1,24 @@
 import AppKit
 
+enum IconMode: Int {
+    case full    = 0
+    case minimal = 1
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     var statusItem: NSStatusItem!
     let audioEngine = BeatAudioEngine()
     var isActive    = false
     var toggleItem: NSMenuItem!
+    var iconMode: IconMode = .full
 
     lazy var settingsController = SettingsWindowController(engine: audioEngine)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let raw = UserDefaults.standard.object(forKey: "iconMode") as? Int {
+            iconMode = IconMode(rawValue: raw) ?? .full
+        }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = makeStatusIcon(active: false)
         statusItem.button?.imageScaling = .scaleProportionallyDown
@@ -74,6 +83,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardController.shared.restore()
     }
 
+    func refreshStatusIcon() {
+        statusItem.button?.image = makeStatusIcon(active: isActive)
+    }
+
     func onBeat(_ intensity: Float) {
         KeyboardController.shared.pulse(intensity: intensity)
         guard isActive else { return }
@@ -92,6 +105,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: — Menu bar icon
 
     private func makeStatusIcon(active: Bool, beat: Bool = false) -> NSImage {
+        switch iconMode {
+        case .full:    return makeFullIcon(active: active, beat: beat)
+        case .minimal: return makeMinimalIcon(active: active, beat: beat)
+        }
+    }
+
+    private func makeFullIcon(active: Bool, beat: Bool) -> NSImage {
         let img = NSImage(size: NSSize(width: 22, height: 22), flipped: true) { _ in
             // flipped: true → y=0 at top, y increases downward (matches design coords)
             let iconColor = NSColor.labelColor.withAlphaComponent(0.85)
@@ -139,6 +159,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 NSBezierPath(ovalIn: NSRect(x: 16.8, y: 16.8, width: 5.2, height: 5.2)).fill()
             }
 
+            return true
+        }
+        img.isTemplate = false
+        return img
+    }
+
+    private func makeMinimalIcon(active: Bool, beat: Bool) -> NSImage {
+        let img = NSImage(size: NSSize(width: 22, height: 22), flipped: false) { _ in
+            let color: NSColor
+            if beat         { color = .systemOrange }
+            else if active  { color = .systemGreen }
+            else            { color = NSColor.labelColor.withAlphaComponent(0.4) }
+            color.setFill()
+            NSBezierPath(ovalIn: NSRect(x: 7, y: 7, width: 8, height: 8)).fill()
             return true
         }
         img.isTemplate = false
