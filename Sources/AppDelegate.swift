@@ -14,11 +14,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var iconMode: IconMode = .full
 
     lazy var settingsController = SettingsWindowController(engine: audioEngine)
+    lazy var screenFlash = ScreenFlashController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let raw = UserDefaults.standard.object(forKey: "iconMode") as? Int {
             iconMode = IconMode(rawValue: raw) ?? .full
         }
+        screenFlash.isEnabled = UserDefaults.standard.bool(forKey: "screenFlash")
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = makeStatusIcon(active: false)
         statusItem.button?.imageScaling = .scaleProportionallyDown
@@ -78,6 +80,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func stop() {
         audioEngine.stop()
         isActive = false
+        screenFlash.isEnabled = false
         statusItem.button?.image = makeStatusIcon(active: false)
         toggleItem?.title = "▶  Start Beat Sync"
         KeyboardController.shared.restore()
@@ -89,6 +92,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func onBeat(_ intensity: Float) {
         KeyboardController.shared.pulse(intensity: intensity)
+        screenFlash.flash(intensity: intensity)
         guard isActive else { return }
         statusItem.button?.image = makeStatusIcon(active: true, beat: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in

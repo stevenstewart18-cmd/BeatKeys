@@ -12,6 +12,7 @@ class SettingsWindowController: NSWindowController {
     private var calibrateButton:    NSButton!
     private var intervalSlider:     NSSlider!
     private var intervalLabel:      NSTextField!
+    private var screenFlashCheck:   NSButton!
     private var bpmLabel:           NSTextField!
     private var beatMeter:          NSProgressIndicator!
     private var meterLevel:         Double = 0
@@ -25,6 +26,7 @@ class SettingsWindowController: NSWindowController {
         static let frequencyBand = "frequencyBand"
         static let iconMode      = "iconMode"
         static let pulsePattern  = "pulsePattern"
+        static let screenFlash   = "screenFlash"
     }
 
     init(engine: BeatAudioEngine) {
@@ -138,7 +140,14 @@ class SettingsWindowController: NSWindowController {
                                    action: #selector(intervalChanged))
         intervalLabel = addValueLabel(x: vx, y: 135, w: vw, in: cv)
 
-        // ── Row 4: BPM readout ────────────────────────────────────────────
+        // ── Row 4: Screen Flash ───────────────────────────────────────────
+        addLabel("Screen Flash:", x: lx, y: 107, w: lw, in: cv)
+        screenFlashCheck = NSButton(checkboxWithTitle: "Flash screen edges on beat",
+                                    target: self, action: #selector(screenFlashChanged))
+        screenFlashCheck.frame = NSRect(x: cx, y: 105, width: cw + vw + 4, height: 20)
+        cv.addSubview(screenFlashCheck)
+
+        // ── Row 5: BPM readout ────────────────────────────────────────────
         addLabel("Estimated BPM:", x: lx, y: 87, w: lw, in: cv)
         bpmLabel = addValueLabel(x: cx, y: 87, w: 100, in: cv)
         bpmLabel.stringValue = "—"
@@ -212,6 +221,14 @@ class SettingsWindowController: NSWindowController {
         }
     }
 
+    @objc private func screenFlashChanged() {
+        let on = screenFlashCheck.state == .on
+        UserDefaults.standard.set(on, forKey: Key.screenFlash)
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.screenFlash.isEnabled = on
+        }
+    }
+
     @objc private func calibrateTapped() {
         calibrateButton.isEnabled = false
         calibrateButton.title = "Listening…"
@@ -267,11 +284,13 @@ class SettingsWindowController: NSWindowController {
         bandControl.selectedSegment    = FrequencyBand.fullSpectrum.rawValue
         iconControl.selectedSegment    = IconMode.full.rawValue
         patternControl.selectedSegment = PulsePattern.pulse.rawValue
+        screenFlashCheck.state         = .off
         sensitivityChanged()
         intervalChanged()
         bandChanged()
         iconChanged()
         patternChanged()
+        screenFlashChanged()
     }
 
     // MARK: - State
@@ -314,6 +333,12 @@ class SettingsWindowController: NSWindowController {
         let p = PulsePattern(rawValue: patternRaw) ?? .pulse
         patternControl.selectedSegment    = p.rawValue
         KeyboardController.shared.pattern = p
+
+        let flashOn = ud.bool(forKey: Key.screenFlash)
+        screenFlashCheck.state = flashOn ? .on : .off
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.screenFlash.isEnabled = flashOn
+        }
 
         updateValueLabels()
     }

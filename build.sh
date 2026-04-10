@@ -15,6 +15,7 @@ swiftc \
     "$PROJ/Sources/AudioEngine.swift" \
     "$PROJ/Sources/KeyboardController.swift" \
     "$PROJ/Sources/SettingsWindowController.swift" \
+    "$PROJ/Sources/ScreenFlashController.swift" \
     -framework AppKit \
     -framework CoreAudio \
     -framework Accelerate \
