@@ -9,6 +9,7 @@ enum FrequencyBand: Int, CaseIterable {
     case bass         = 1   // 60–250 Hz  (kick drum, bass guitar)
     case rhythm       = 2   // 250–800 Hz (snare, mid percussion)
     case highs        = 3   // 2 kHz–8 kHz (hi-hat, cymbals)
+    case multiBand    = 4   // weighted fusion of bass + rhythm + highs
 
     var label: String {
         switch self {
@@ -16,16 +17,19 @@ enum FrequencyBand: Int, CaseIterable {
         case .bass:         return "Bass"
         case .rhythm:       return "Rhythm"
         case .highs:        return "Highs"
+        case .multiBand:    return "Multi"
         }
     }
 
     /// Frequency range (Hz) used to select FFT bins.
+    /// For .multiBand the range is unused; sub-band ranges are used directly.
     var range: (lo: Float, hi: Float) {
         switch self {
         case .fullSpectrum: return (20, 20_000)
         case .bass:         return (60, 250)
         case .rhythm:       return (250, 800)
         case .highs:        return (2_000, 8_000)
+        case .multiBand:    return (60, 8_000)
         }
     }
 }
@@ -38,6 +42,9 @@ class BeatAudioEngine {
 
     // ── Tunable parameters (safe to set from any thread before beat fires) ──
     var sensitivity: Float = 0.5
+
+    // Multi-band fusion weights (bass + rhythm + highs); sum need not equal 1.
+    private let bandWeights = (bass: Float(0.5), rhythm: Float(0.3), highs: Float(0.2))
 
     var frequencyBand: FrequencyBand = .fullSpectrum {
         didSet {
@@ -407,15 +414,31 @@ class BeatAudioEngine {
         var power = [Float](repeating: 0, count: halfN)
         vDSP_zvmags(&split, 1, &power, 1, vDSP_Length(halfN))
 
+        let binHz = sampleRate / Float(fftSize)
+
+        if frequencyBand == .multiBand {
+            // Weighted fusion: run spectral flux on three sub-bands independently.
+            let bf = singleBandFlux(power: power, binHz: binHz, halfN: halfN,
+                                    range: FrequencyBand.bass.range)
+            let rf = singleBandFlux(power: power, binHz: binHz, halfN: halfN,
+                                    range: FrequencyBand.rhythm.range)
+            let hf = singleBandFlux(power: power, binHz: binHz, halfN: halfN,
+                                    range: FrequencyBand.highs.range)
+            return bandWeights.bass * bf + bandWeights.rhythm * rf + bandWeights.highs * hf
+        }
+
         // Map the selected band's Hz range to FFT bin indices.
         // fullSpectrum skips DC (bin 0) and uses all remaining bins.
-        let binHz = sampleRate / Float(fftSize)
         let range = frequencyBand.range
+        return singleBandFlux(power: power, binHz: binHz, halfN: halfN, range: range)
+    }
+
+    /// Computes half-wave-rectified flux for a single Hz range and updates prevMagnitude.
+    private func singleBandFlux(power: [Float], binHz: Float, halfN: Int,
+                                range: (lo: Float, hi: Float)) -> Float {
         let loBin = max(1,       Int((range.lo / binHz).rounded()))
         let hiBin = min(halfN-1, Int((range.hi / binHz).rounded()))
         guard loBin <= hiBin else { return 0 }
-
-        // Half-wave-rectified flux: sum of magnitude increases vs previous frame.
         var flux: Float = 0
         for i in loBin...hiBin {
             let mag  = sqrt(power[i])
@@ -423,7 +446,6 @@ class BeatAudioEngine {
             if diff > 0 { flux += diff }
             prevMagnitude[i] = mag
         }
-        // Normalize by bin count and window size so the scale matches the ring buffer.
         return flux / Float(hiBin - loBin + 1) / Float(fftSize)
     }
 
