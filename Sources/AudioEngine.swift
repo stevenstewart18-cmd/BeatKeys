@@ -100,6 +100,10 @@ class BeatAudioEngine {
     private var  prevMagnitude:[Float] = []   // per-bin magnitudes from previous frame
     private var  sampleRate:   Float   = 44100
 
+    // ── Calibration ─────────────────────────────────────────────────────
+    private(set) var isCalibrating = false
+    private var calibrationFluxes: [Float] = []
+
     // ── Auto-recovery ────────────────────────────────────────────────────
     private var healthTimer:      DispatchSourceTimer?
     private var lastNonZeroCount  = 0
@@ -142,6 +146,31 @@ class BeatAudioEngine {
         removeDeviceChangeListener()
         teardownTap()
         NSLog("BeatKeys: stopped")
+    }
+
+    // MARK: - Calibration
+
+    func startCalibration() {
+        calibrationFluxes.removeAll()
+        isCalibrating = true
+    }
+
+    /// Analyzes collected flux samples and returns the auto-tuned sensitivity.
+    /// Returns nil if fewer than 50 samples were collected (no audio playing).
+    func finishCalibration() -> Float? {
+        isCalibrating = false
+        guard calibrationFluxes.count >= 50 else { return nil }
+        let sorted = calibrationFluxes.sorted()
+        let p85idx = Int(Float(sorted.count) * 0.85)
+        let medidx = sorted.count / 2
+        let p85    = sorted[min(p85idx, sorted.count - 1)]
+        let median = sorted[medidx]
+        guard median > 1e-9 else { return nil }
+        // Invert the beat threshold formula: threshold = mean * (1.15 + (1-s)*0.4)
+        // We want the multiplier so that p85 fires as a beat against the median background.
+        let ratio = p85 / median
+        let s = 1.0 - max(0, (ratio - 1.15) / 0.4)
+        return min(1.0, max(0.1, Float(s)))
     }
 
     // MARK: - Output Device Change Listener
@@ -327,6 +356,10 @@ class BeatAudioEngine {
         // Returns the half-wave-rectified flux for the selected band.
         // Fires on transients (note onsets, drum hits) rather than sustained energy.
         let flux = accumAndComputeFlux(samples: samples, stride: ch, frames: frames)
+
+        if isCalibrating, calibrationFluxes.count < 500 {
+            calibrationFluxes.append(flux)
+        }
 
         ringBuf[ringIdx % bufSize] = flux
         ringIdx += 1

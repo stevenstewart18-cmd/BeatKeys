@@ -9,6 +9,7 @@ class SettingsWindowController: NSWindowController {
     private var bandControl:        NSSegmentedControl!
     private var sensitivitySlider:  NSSlider!
     private var sensitivityLabel:   NSTextField!
+    private var calibrateButton:    NSButton!
     private var intervalSlider:     NSSlider!
     private var intervalLabel:      NSTextField!
     private var bpmLabel:           NSTextField!
@@ -117,12 +118,18 @@ class SettingsWindowController: NSWindowController {
         bandControl.frame = NSRect(x: cx, y: 230, width: cw + vw + 4, height: 26)
         cv.addSubview(bandControl)
 
-        // ── Row 2: Sensitivity ────────────────────────────────────────────
+        // ── Row 3: Sensitivity ────────────────────────────────────────────
         addLabel("Sensitivity:", x: lx, y: 187, w: lw, in: cv)
         sensitivitySlider = addSlider(min: 0.1, max: 1.0, val: 0.5,
-                                      x: cx, y: 185, w: cw, in: cv,
+                                      x: cx, y: 185, w: cw - 90, in: cv,
                                       action: #selector(sensitivityChanged))
-        sensitivityLabel = addValueLabel(x: vx, y: 185, w: vw, in: cv)
+        sensitivityLabel = addValueLabel(x: vx - 86, y: 185, w: vw, in: cv)
+        calibrateButton = NSButton(title: "Calibrate", target: self,
+                                   action: #selector(calibrateTapped))
+        calibrateButton.bezelStyle = .rounded
+        calibrateButton.controlSize = .small
+        calibrateButton.frame = NSRect(x: vx - 86 + vw + 4, y: 183, width: 82, height: 22)
+        cv.addSubview(calibrateButton)
 
         // ── Row 3: Min Beat Gap ───────────────────────────────────────────
         addLabel("Min Beat Gap:", x: lx, y: 137, w: lw, in: cv)
@@ -202,6 +209,29 @@ class SettingsWindowController: NSWindowController {
         if let delegate = NSApp.delegate as? AppDelegate {
             delegate.iconMode = mode
             delegate.refreshStatusIcon()
+        }
+    }
+
+    @objc private func calibrateTapped() {
+        calibrateButton.isEnabled = false
+        calibrateButton.title = "Listening…"
+        engine.startCalibration()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
+            guard let self else { return }
+            if let s = self.engine.finishCalibration() {
+                self.engine.sensitivity = s
+                self.sensitivitySlider.doubleValue = Double(s)
+                UserDefaults.standard.set(s, forKey: Key.sensitivity)
+                self.updateValueLabels()
+            } else {
+                let alert = NSAlert()
+                alert.messageText = "No audio detected"
+                alert.informativeText = "Play music during calibration and try again."
+                alert.alertStyle = .warning
+                alert.runModal()
+            }
+            self.calibrateButton.title = "Calibrate"
+            self.calibrateButton.isEnabled = true
         }
     }
 
