@@ -2,16 +2,37 @@ import AppKit
 
 private class FlashView: NSView {
     override func draw(_ dirtyRect: NSRect) {
-        let borderW: CGFloat = 20
-        NSColor.systemOrange.withAlphaComponent(0.85).setFill()
-        // Top
-        NSRect(x: 0, y: bounds.height - borderW, width: bounds.width, height: borderW).fill()
-        // Bottom
-        NSRect(x: 0, y: 0, width: bounds.width, height: borderW).fill()
-        // Left
-        NSRect(x: 0, y: borderW, width: borderW, height: bounds.height - borderW * 2).fill()
-        // Right
-        NSRect(x: bounds.width - borderW, y: borderW, width: borderW, height: bounds.height - borderW * 2).fill()
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let w = bounds.width, h = bounds.height
+        let edgeW: CGFloat = 60   // gradient fade width
+
+        let white    = NSColor.white.cgColor
+        let clear    = NSColor.clear.cgColor
+        let colors   = [white, clear] as CFArray
+        let locs: [CGFloat] = [0, 1]
+        let space = CGColorSpaceCreateDeviceRGB()
+        guard let grad = CGGradient(colorsSpace: space, colors: colors, locations: locs) else { return }
+
+        // Top edge: fade downward
+        ctx.drawLinearGradient(grad,
+            start: CGPoint(x: 0, y: h),
+            end:   CGPoint(x: 0, y: h - edgeW),
+            options: [])
+        // Bottom edge: fade upward
+        ctx.drawLinearGradient(grad,
+            start: CGPoint(x: 0, y: 0),
+            end:   CGPoint(x: 0, y: edgeW),
+            options: [])
+        // Left edge: fade rightward
+        ctx.drawLinearGradient(grad,
+            start: CGPoint(x: 0, y: 0),
+            end:   CGPoint(x: edgeW, y: 0),
+            options: [])
+        // Right edge: fade leftward
+        ctx.drawLinearGradient(grad,
+            start: CGPoint(x: w, y: 0),
+            end:   CGPoint(x: w - edgeW, y: 0),
+            options: [])
     }
 }
 

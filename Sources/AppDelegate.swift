@@ -176,7 +176,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             else if active  { color = .systemGreen }
             else            { color = NSColor.labelColor.withAlphaComponent(0.4) }
             color.setFill()
-            NSBezierPath(ovalIn: NSRect(x: 7, y: 7, width: 8, height: 8)).fill()
+            NSBezierPath(roundedRect: NSRect(x: 7, y: 7, width: 8, height: 8),
+                         xRadius: 1.5, yRadius: 1.5).fill()
             return true
         }
         img.isTemplate = false
