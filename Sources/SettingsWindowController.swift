@@ -5,6 +5,7 @@ class SettingsWindowController: NSWindowController {
     private let engine: BeatAudioEngine
 
     private var iconControl:        NSSegmentedControl!
+    private var patternControl:     NSSegmentedControl!
     private var bandControl:        NSSegmentedControl!
     private var sensitivitySlider:  NSSlider!
     private var sensitivityLabel:   NSTextField!
@@ -22,13 +23,14 @@ class SettingsWindowController: NSWindowController {
         static let minBeatGapMs  = "minBeatGapMs"
         static let frequencyBand = "frequencyBand"
         static let iconMode      = "iconMode"
+        static let pulsePattern  = "pulsePattern"
     }
 
     init(engine: BeatAudioEngine) {
         self.engine = engine
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 326),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 372),
             styleMask:   [.titled, .closable, .nonactivatingPanel],
             backing:     .buffered,
             defer:       false)
@@ -86,16 +88,26 @@ class SettingsWindowController: NSWindowController {
         let vw: CGFloat = 44    // value-label width
 
         // ── Row 0: Icon Style ─────────────────────────────────────────────
-        addLabel("Icon Style:", x: lx, y: 279, w: lw, in: cv)
+        addLabel("Icon Style:", x: lx, y: 325, w: lw, in: cv)
         iconControl = NSSegmentedControl(
             labels:       ["Full", "Minimal"],
             trackingMode: .selectOne,
             target:       self,
             action:       #selector(iconChanged))
-        iconControl.frame = NSRect(x: cx, y: 276, width: 120, height: 26)
+        iconControl.frame = NSRect(x: cx, y: 322, width: 120, height: 26)
         cv.addSubview(iconControl)
 
-        // ── Row 1: Frequency Band ─────────────────────────────────────────
+        // ── Row 1: Pulse Pattern ──────────────────────────────────────────
+        addLabel("Pulse Pattern:", x: lx, y: 279, w: lw, in: cv)
+        patternControl = NSSegmentedControl(
+            labels:       PulsePattern.allCases.map(\.label),
+            trackingMode: .selectOne,
+            target:       self,
+            action:       #selector(patternChanged))
+        patternControl.frame = NSRect(x: cx, y: 276, width: cw + vw + 4, height: 26)
+        cv.addSubview(patternControl)
+
+        // ── Row 2: Frequency Band ─────────────────────────────────────────
         addLabel("Beat Source:", x: lx, y: 233, w: lw, in: cv)
         bandControl = NSSegmentedControl(
             labels:       FrequencyBand.allCases.map(\.label),
@@ -193,6 +205,12 @@ class SettingsWindowController: NSWindowController {
         }
     }
 
+    @objc private func patternChanged() {
+        let p = PulsePattern(rawValue: patternControl.selectedSegment) ?? .pulse
+        KeyboardController.shared.pattern = p
+        UserDefaults.standard.set(p.rawValue, forKey: Key.pulsePattern)
+    }
+
     @objc private func bandChanged() {
         let band = FrequencyBand(rawValue: bandControl.selectedSegment) ?? .fullSpectrum
         engine.frequencyBand = band
@@ -218,10 +236,12 @@ class SettingsWindowController: NSWindowController {
         intervalSlider.doubleValue     = 140
         bandControl.selectedSegment    = FrequencyBand.fullSpectrum.rawValue
         iconControl.selectedSegment    = IconMode.full.rawValue
+        patternControl.selectedSegment = PulsePattern.pulse.rawValue
         sensitivityChanged()
         intervalChanged()
         bandChanged()
         iconChanged()
+        patternChanged()
     }
 
     // MARK: - State
@@ -258,6 +278,12 @@ class SettingsWindowController: NSWindowController {
         if let delegate = NSApp.delegate as? AppDelegate {
             delegate.iconMode = mode
         }
+
+        let patternRaw: Int = ud.object(forKey: Key.pulsePattern) != nil
+            ? ud.integer(forKey: Key.pulsePattern) : PulsePattern.pulse.rawValue
+        let p = PulsePattern(rawValue: patternRaw) ?? .pulse
+        patternControl.selectedSegment    = p.rawValue
+        KeyboardController.shared.pattern = p
 
         updateValueLabels()
     }

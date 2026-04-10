@@ -1,9 +1,27 @@
 import Foundation
 import ObjectiveC.runtime
 
+enum PulsePattern: Int, CaseIterable {
+    case pulse  = 0
+    case strobe = 1
+    case wave   = 2
+    case throb  = 3
+
+    var label: String {
+        switch self {
+        case .pulse:  return "Pulse"
+        case .strobe: return "Strobe"
+        case .wave:   return "Wave"
+        case .throb:  return "Throb"
+        }
+    }
+}
+
 class KeyboardController {
 
     static let shared = KeyboardController()
+
+    var pattern: PulsePattern = .pulse
 
     private var client: NSObject?
     private var keyboardID: UInt64 = 0
@@ -83,28 +101,83 @@ class KeyboardController {
         guard !pulseInFlight else { return }
         pulseInFlight = true
 
+        switch pattern {
+        case .pulse:  pulsePulse(intensity: intensity)
+        case .strobe: pulseStrobe(intensity: intensity)
+        case .wave:   pulseWave(intensity: intensity)
+        case .throb:  pulseThrob(intensity: intensity)
+        }
+    }
+
+    // Standard dip-and-recover (original behavior).
+    private func pulsePulse(intensity: Float) {
         let home  = homeBrightness
-        // Scale dip depth by intensity: floor at 0.3 so weak beats are still visible.
         let depth = 0.75 * max(0.3, min(1.0, intensity))
         let dip   = max(0.0, home - depth)
 
-        setBrightness(dip, fadeSpeed: 5)    // near-instant snap (0 uses a broken selector path)
+        setBrightness(dip, fadeSpeed: 5)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) { [weak self] in
             self?.setBrightness(home, fadeSpeed: 80)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-            guard let self else { return }
-            self.pulseInFlight = false
-            // Schedule breathing to start after 2s of silence.
-            let item = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                self.breathPhase = Float.pi   // start from home brightness, breathe down
-                self.startBreathing()
-            }
-            self.breathRestartItem = item
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: item)
+            self?.finishPulse()
         }
+    }
+
+    // Hard snap to black, snap back.
+    private func pulseStrobe(intensity: Float) {
+        let home = homeBrightness
+        setBrightness(0, fadeSpeed: 5)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+            self?.setBrightness(home, fadeSpeed: 5)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            self?.finishPulse()
+        }
+    }
+
+    // Slow sine fade down, then back up.
+    private func pulseWave(intensity: Float) {
+        let home  = homeBrightness
+        let depth = 0.75 * max(0.3, min(1.0, intensity))
+        let dip   = max(0.0, home - depth)
+
+        setBrightness(dip, fadeSpeed: 200)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.40) { [weak self] in
+            self?.setBrightness(home, fadeSpeed: 200)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.80) { [weak self] in
+            self?.finishPulse()
+        }
+    }
+
+    // Dip to half-intensity, long tail recovery.
+    private func pulseThrob(intensity: Float) {
+        let home = homeBrightness
+        let dip  = home * 0.5 * max(0.3, min(1.0, intensity))
+
+        setBrightness(dip, fadeSpeed: 5)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            self?.setBrightness(home, fadeSpeed: 250)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) { [weak self] in
+            self?.finishPulse()
+        }
+    }
+
+    private func finishPulse() {
+        pulseInFlight = false
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.breathPhase = Float.pi
+            self.startBreathing()
+        }
+        breathRestartItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: item)
     }
 
     func restore() {
