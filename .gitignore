@@ -12,3 +12,7 @@ tap_diag*
 # macOS
 .DS_Store
 *.dmg
+
+# Claude
+CLAUDE.md
+**/CLAUDE.md
